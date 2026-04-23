@@ -224,7 +224,7 @@ def encode_audio(
     Args:
         audio_array: NumPy array containing audio data (expected as float32, range [-1, 1]).
         sample_rate: Sample rate of the input audio data.
-        output_format: Desired output format ('opus', 'wav' or 'mp3').
+        output_format: Desired output format ('opus', 'wav', 'mp3', or 'pcm' raw s16le).
         target_sample_rate: Optional target sample rate to resample to before encoding.
 
     Returns:
@@ -332,6 +332,12 @@ def encode_audio(
                 format="wav",
                 subtype="pcm_16",
             )
+
+        elif output_format == "pcm":
+            # Raw little-endian signed 16-bit PCM (no header), same sample layout as OpenAI PCM.
+            audio_clipped = np.clip(audio_array, -1.0, 1.0)
+            audio_int16 = (audio_clipped * 32767).astype(np.int16)
+            output_buffer.write(audio_int16.tobytes())
 
         elif output_format == "mp3":
             audio_clipped = np.clip(audio_array, -1.0, 1.0)

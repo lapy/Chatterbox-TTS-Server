@@ -1255,7 +1255,12 @@ class PerformanceMonitor:
     """
 
     def __init__(
-        self, enabled: bool = True, logger_instance: Optional[logging.Logger] = None
+        self,
+        enabled: bool = True,
+        logger_instance: Optional[logging.Logger] = None,
+        *,
+        request_id: Optional[str] = None,
+        cuda_sync: bool = False,
     ):
         self.enabled: bool = enabled
         self.logger = (
@@ -1263,16 +1268,49 @@ class PerformanceMonitor:
             if logger_instance is not None
             else logging.getLogger(__name__)
         )
+        self.request_id: Optional[str] = request_id
+        self.cuda_sync: bool = cuda_sync
         self.start_time: float = 0.0
         self.events: List[Tuple[str, float]] = []
         if self.enabled:
             self.start_time = time.monotonic()
             self.events.append(("Monitoring Started", self.start_time))
+            if self.request_id:
+                self.logger.info(
+                    "PerformanceMonitor started request_id=%s cuda_sync=%s",
+                    self.request_id,
+                    self.cuda_sync,
+                )
+
+    @property
+    def prefix(self) -> str:
+        return f"[req {self.request_id}] " if self.request_id else ""
 
     def record(self, event_name: str):
         if not self.enabled:
             return
         self.events.append((event_name, time.monotonic()))
+
+    def record_duration(
+        self,
+        event_name: str,
+        duration_sec: float,
+        *,
+        log_level: int = logging.INFO,
+        extra: Optional[str] = None,
+    ) -> None:
+        """Log a precomputed interval (e.g. engine prepare vs generate)."""
+        if not self.enabled:
+            return
+        suffix = f" {extra}" if extra else ""
+        self.logger.log(
+            log_level,
+            "%s%s took %.4fs%s",
+            self.prefix,
+            event_name,
+            duration_sec,
+            suffix,
+        )
 
     def report(self, log_level: int = logging.DEBUG) -> str:
         if not self.enabled or not self.events:
@@ -1287,13 +1325,15 @@ class PerformanceMonitor:
             duration_since_last = timestamp - last_event_time
             duration_since_start = timestamp - self.start_time
             report_lines.append(
-                f"  - Event: '{event_name}' (after '{prev_event_name}') "
+                f"{self.prefix}  - Event: '{event_name}' (after '{prev_event_name}') "
                 f"took {duration_since_last:.4f}s. Total elapsed: {duration_since_start:.4f}s"
             )
             last_event_time = timestamp
 
         total_duration = self.events[-1][1] - self.start_time
-        report_lines.append(f"Total Monitored Duration: {total_duration:.4f}s")
+        report_lines.append(
+            f"{self.prefix}Total Monitored Duration: {total_duration:.4f}s"
+        )
         full_report_str = "\n".join(report_lines)
 
         if self.logger:

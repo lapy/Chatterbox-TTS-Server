@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from functools import partial
 
+import engine as engine_module
+import numpy as np
 import pytest
+import torch
 
 from models import CustomTTSRequest, OpenAISpeechRequest
 from tts_orchestration import (
@@ -14,6 +18,7 @@ from tts_orchestration import (
     build_text_chunks,
     resolve_synthesis_params_custom,
     resolve_synthesis_params_openai,
+    synthesize_text_chunks_async,
 )
 
 
@@ -190,3 +195,131 @@ def test_synthesize_partial_keyword_binding_contract():
     )
     out = fn("[sigh] test phrase")
     assert out == ("[sigh] test phrase", "/voices/a.wav", "en")
+
+
+def test_synthesize_text_chunks_batch_preserves_input_order(monkeypatch):
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 0, "en", 1.0)
+    text_chunks = ["slow", "fast", "medium"]
+    calls = []
+
+    def fake_synthesize_batch(jobs, perf_monitor=None, log_prefix=""):
+        calls.append([job["text"] for job in jobs])
+        mapping = {
+            "slow": torch.tensor([1.0], dtype=torch.float32),
+            "fast": torch.tensor([2.0], dtype=torch.float32),
+            "medium": torch.tensor([3.0], dtype=torch.float32),
+        }
+        return [(mapping[job["text"]], 24000) for job in jobs]
+
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
+    # 0 => single batch with all chunks
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", lambda _k, _d: 0)
+
+    segments, sr = asyncio.run(
+        synthesize_text_chunks_async(
+            text_chunks,
+            audio_prompt_path_str=None,
+            params=params,
+            perf_monitor=None,
+            log_prefix="test",
+        )
+    )
+
+    assert sr == 24000
+    assert [float(seg.reshape(-1)[0]) for seg in segments] == [1.0, 2.0, 3.0]
+    assert calls == [["slow", "fast", "medium"]]
+
+
+def test_synthesize_text_chunks_batch_splits_when_chunk_batch_size_set(monkeypatch):
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 0, "en", 1.0)
+    text_chunks = ["slow", "fast", "medium"]
+    calls = []
+
+    def fake_synthesize_batch(jobs, perf_monitor=None, log_prefix=""):
+        calls.append([job["text"] for job in jobs])
+        mapping = {
+            "slow": torch.tensor([1.0], dtype=torch.float32),
+            "fast": torch.tensor([2.0], dtype=torch.float32),
+            "medium": torch.tensor([3.0], dtype=torch.float32),
+        }
+        return [(mapping[job["text"]], 24000) for job in jobs]
+
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", lambda _k, _d: 2)
+
+    segments, sr = asyncio.run(
+        synthesize_text_chunks_async(
+            text_chunks,
+            audio_prompt_path_str=None,
+            params=params,
+            perf_monitor=None,
+            log_prefix="test",
+        )
+    )
+
+    assert sr == 24000
+    assert [float(seg.reshape(-1)[0]) for seg in segments] == [1.0, 2.0, 3.0]
+    assert calls == [["slow", "fast"], ["medium"]]
+
+
+def test_chunked_reference_path_only_on_first_job(monkeypatch):
+    """Later chunks must not pass audio_prompt_path so conditioning is reused."""
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 0, "en", 1.0)
+    captured = []
+
+    def fake_synthesize_batch(jobs, perf_monitor=None, log_prefix=""):
+        captured.append([(j.get("audio_prompt_path"), j["text"]) for j in jobs])
+        return [(torch.tensor([1.0], dtype=torch.float32), 24000) for _ in jobs]
+
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", lambda _k, _d: 0)
+
+    asyncio.run(
+        synthesize_text_chunks_async(
+            ["chunk a", "chunk b"],
+            "/voices/ref.wav",
+            params,
+            perf_monitor=None,
+            log_prefix="test",
+        )
+    )
+    assert captured == [[("/voices/ref.wav", "chunk a"), (None, "chunk b")]]
+
+
+def test_synthesize_text_chunks_batch_does_not_apply_speed_factor(monkeypatch):
+    """Speed is applied post-stitch in route handlers, not in orchestration."""
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 0, "en", 1.5)
+    text_chunks = ["a", "b"]
+    speed_calls = []
+
+    def fake_synthesize_batch(jobs, perf_monitor=None, log_prefix=""):
+        return [
+            (torch.tensor([1.0], dtype=torch.float32), 24000),
+            (torch.tensor([2.0], dtype=torch.float32), 24000),
+        ]
+
+    def fake_apply_speed_factor(audio_tensor, sample_rate, speed_factor):
+        speed_calls.append((float(audio_tensor[0]), sample_rate, speed_factor))
+        return audio_tensor + 10, sample_rate
+
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", lambda _k, _d: 0)
+    monkeypatch.setitem(
+        sys.modules,
+        "utils",
+        types.SimpleNamespace(apply_speed_factor=fake_apply_speed_factor),
+    )
+
+    segments, sr = asyncio.run(
+        synthesize_text_chunks_async(
+            text_chunks,
+            audio_prompt_path_str=None,
+            params=params,
+            perf_monitor=None,
+            log_prefix="test",
+        )
+    )
+
+    assert sr == 24000
+    assert [float(seg.reshape(-1)[0]) for seg in segments] == [1.0, 2.0]
+    assert speed_calls == []

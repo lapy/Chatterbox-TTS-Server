@@ -218,6 +218,8 @@ This server application enhances the underlying `chatterbox-tts` engine with the
     *   📄 Optional `download_model.py` script available to pre-download specific model components to a local directory (this is separate from the main HF cache used at runtime).
 *   **Performance & Configuration:**
     *   💻 **GPU Acceleration:** Automatically uses NVIDIA CUDA, Apple MPS, or AMD ROCm if available, falls back to CPU.
+    *   ⏱️ **Latency profiling:** Enable `server.enable_performance_monitor` for per-request / per-chunk logs (including `prepare_conditionals` vs `model_generate`). Use `server.performance_cuda_sync` only when profiling CUDA (adds overhead). Chunked synthesis reuses voice embeddings under one inference lock; set `tts_engine.chunk_batch_size: 0` to minimize Python batching overhead.
+    *   📊 **Benchmark script:** `python scripts/benchmark_cuda_latency.py` (requires `httpx`) hits `/tts` and `/v1/audio/speech` with short/long texts; set `CHATTERBOX_BENCH_BASE` and `CHATTERBOX_BENCH_VOICE` as needed.
     *   ⚙️ All configuration via `config.yaml`.
     *   📦 Uses standard Python virtual environments.
     *   📦 **Portable Mode (Windows):** Self-contained installation that can be copied, moved, or shared — no Python needed on the target machine.

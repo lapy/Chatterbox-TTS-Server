@@ -1487,21 +1487,49 @@ document.addEventListener('DOMContentLoaded', async function () {
             "tts_engine.device": currentConfig.tts_engine?.device, "tts_engine.default_voice_id": currentConfig.tts_engine?.default_voice_id,
             "paths.model_cache": currentConfig.paths?.model_cache, "tts_engine.predefined_voices_path": currentConfig.tts_engine?.predefined_voices_path,
             "tts_engine.reference_audio_path": currentConfig.tts_engine?.reference_audio_path, "paths.output": currentConfig.paths?.output,
-            "audio_output.format": currentConfig.audio_output?.format, "audio_output.sample_rate": currentConfig.audio_output?.sample_rate
+            "audio_output.format": currentConfig.audio_output?.format, "audio_output.sample_rate": currentConfig.audio_output?.sample_rate,
+            "tts_engine.chunk_batch_size": currentConfig.tts_engine?.chunk_batch_size,
+            "server.auth_username": currentConfig.server?.auth_username,
+            "server.auth_password": currentConfig.server?.auth_password,
+            "server.cors_origins": Array.isArray(currentConfig.server?.cors_origins)
+                ? currentConfig.server.cors_origins.join(',')
+                : (currentConfig.server?.cors_origins || ''),
+            "server.log_file_path": currentConfig.server?.log_file_path,
+            "server.log_file_max_size_mb": currentConfig.server?.log_file_max_size_mb,
+            "server.log_file_backup_count": currentConfig.server?.log_file_backup_count,
+            "server.ssl_certfile": currentConfig.server?.ssl_certfile,
+            "server.ssl_keyfile": currentConfig.server?.ssl_keyfile,
+            "model.repo_id": currentConfig.model?.repo_id,
+            "audio_output.max_reference_duration_sec": currentConfig.audio_output?.max_reference_duration_sec,
+            "ui.title": currentConfig.ui?.title,
+            "ui.max_predefined_voices_in_dropdown": currentConfig.ui?.max_predefined_voices_in_dropdown,
         };
         const checkboxFields = {
-            "audio_output.save_to_disk": currentConfig.audio_output?.save_to_disk
+            "audio_output.save_to_disk": currentConfig.audio_output?.save_to_disk,
+            "server.use_ngrok": currentConfig.server?.use_ngrok,
+            "server.use_auth": currentConfig.server?.use_auth,
+            "server.cors_allow_all": currentConfig.server?.cors_allow_all,
+            "server.enable_performance_monitor": currentConfig.server?.enable_performance_monitor,
+            "server.performance_cuda_sync": currentConfig.server?.performance_cuda_sync,
+            "ui.show_language_select": currentConfig.ui?.show_language_select,
+            "debug.save_intermediate_audio": currentConfig.debug?.save_intermediate_audio,
         };
+        const readonlyFields = new Set([
+            "server.host",
+            "server.port",
+            "tts_engine.device",
+            "paths.model_cache",
+            "paths.output",
+        ]);
         for (const name in fieldsToDisplay) {
-            const input = serverConfigForm.querySelector(`input[name="${name}"]`);
-            if (input) {
-                input.value = fieldsToDisplay[name] !== undefined ? fieldsToDisplay[name] : '';
-                if (name.includes('.host') || name.includes('.port') || name.includes('.device') || name.includes('paths.')) input.readOnly = true;
-                else input.readOnly = false;
+            const field = serverConfigForm.querySelector(`[name="${name}"]`);
+            if (field) {
+                field.value = fieldsToDisplay[name] !== undefined && fieldsToDisplay[name] !== null ? fieldsToDisplay[name] : '';
+                if ('readOnly' in field) field.readOnly = readonlyFields.has(name);
             }
         }
         for (const name in checkboxFields) {
-            const input = serverConfigForm.querySelector(`input[name="${name}"]`);
+            const input = serverConfigForm.querySelector(`[name="${name}"]`);
             if (input) input.checked = !!checkboxFields[name];
         }
     }
@@ -1530,6 +1558,15 @@ document.addEventListener('DOMContentLoaded', async function () {
                         let value = input.value;
                         if (input.type === 'number') value = parseFloat(value) || 0;
                         else if (input.type === 'checkbox') value = input.checked;
+                        else if (input.name === 'server.cors_origins') {
+                            value = value
+                                .split(',')
+                                .map(v => v.trim())
+                                .filter(Boolean);
+                        }
+                        if ((input.name === 'server.ssl_certfile' || input.name === 'server.ssl_keyfile') && value === '') {
+                            value = null;
+                        }
                         currentLevel[key] = value;
                     } else { currentLevel[key] = currentLevel[key] || {}; currentLevel = currentLevel[key]; }
                 });

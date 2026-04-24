@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from functools import partial
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 from starlette.concurrency import run_in_threadpool
 
+import engine
 from config import (
     config_manager,
     get_gen_default_cfg_weight,
@@ -115,25 +115,6 @@ def build_text_chunks(
     return [text]
 
 
-def make_synthesize_chunk_partial(
-    audio_prompt_path_str: Optional[str],
-    params: ResolvedSynthesisParams,
-) -> Callable[[str], Tuple[np.ndarray, int]]:
-    from audio_pipeline import _synthesize_tts_chunk_sync
-
-    # Bind prompt path by keyword so the first positional slot stays free for chunk_text.
-    return partial(
-        _synthesize_tts_chunk_sync,
-        audio_prompt_path_str=audio_prompt_path_str,
-        temperature=params.temperature,
-        exaggeration=params.exaggeration,
-        cfg_weight=params.cfg_weight,
-        seed=params.seed,
-        language=params.language,
-        speed_factor=params.speed_factor,
-    )
-
-
 async def synthesize_text_chunks_async(
     text_chunks: List[str],
     audio_prompt_path_str: Optional[str],
@@ -142,22 +123,77 @@ async def synthesize_text_chunks_async(
     perf_monitor: Optional[Any] = None,
     log_prefix: str = "TTS",
 ) -> Tuple[List[np.ndarray], int]:
-    synth = make_synthesize_chunk_partial(audio_prompt_path_str, params)
+    """
+    Run chunked synthesis. Speed adjustment is applied once on the stitched waveform
+    in the HTTP layer (lower CPU overhead than per-chunk stretching).
+    """
+    from audio_pipeline import _ensure_mono_waveform_1d
+
+    batch_cfg = config_manager.get_int("tts_engine.chunk_batch_size", 0)
+    chunks_count = len(text_chunks)
+    # 0 or negative => single batch (one threadpool hop) for lowest orchestration overhead.
+    batch_size = chunks_count if batch_cfg <= 0 else max(1, batch_cfg)
+    logger.info(
+        f"{log_prefix}: chunk synthesis batch_size={batch_size} (cfg={batch_cfg}), "
+        f"chunks={chunks_count}"
+    )
     segments: List[np.ndarray] = []
     engine_sr: Optional[int] = None
-    for i, chunk_text in enumerate(text_chunks):
-        logger.info(f"{log_prefix}: synthesizing chunk {i + 1}/{len(text_chunks)}...")
-        wave, sr = await run_in_threadpool(synth, chunk_text)
-        if perf_monitor:
-            perf_monitor.record(f"Engine synthesized chunk {i + 1}")
-        if engine_sr is None:
-            engine_sr = sr
-        elif engine_sr != sr:
-            logger.warning(
-                f"{log_prefix}: inconsistent sample rate on chunk {i + 1} ({sr} Hz vs "
-                f"{engine_sr} Hz); continuing with first chunk rate."
+    for batch_start in range(0, chunks_count, batch_size):
+        batch_end = min(batch_start + batch_size, chunks_count)
+        jobs = []
+        for i in range(batch_start, batch_end):
+            global_idx = i + 1
+            logger.info(
+                f"{log_prefix}: queueing chunk {global_idx}/{chunks_count}..."
             )
-        segments.append(wave)
+            # Only the first chunk of a request prepares reference audio; later chunks
+            # reuse chatterbox_model.conds under the same inference lock.
+            chunk_prompt: Optional[str]
+            if audio_prompt_path_str and i == 0:
+                chunk_prompt = audio_prompt_path_str
+            elif audio_prompt_path_str:
+                chunk_prompt = None
+            else:
+                chunk_prompt = None
+            jobs.append(
+                {
+                    "text": text_chunks[i],
+                    "audio_prompt_path": chunk_prompt,
+                    "temperature": params.temperature,
+                    "exaggeration": params.exaggeration,
+                    "cfg_weight": params.cfg_weight,
+                    "seed": params.seed,
+                    "language": params.language,
+                    "chunk_index": global_idx,
+                    "chunk_total": chunks_count,
+                }
+            )
+        batch_results = await run_in_threadpool(
+            engine.synthesize_batch,
+            jobs,
+            perf_monitor=perf_monitor,
+            log_prefix=log_prefix,
+        )
+        for batch_offset, (audio_tensor, sr) in enumerate(batch_results):
+            chunk_index = batch_start + batch_offset + 1
+            if audio_tensor is None or sr is None:
+                raise RuntimeError(
+                    f"{log_prefix}: engine failed to synthesize chunk {chunk_index}."
+                )
+            if perf_monitor:
+                perf_monitor.record(
+                    f"{log_prefix} postprocess chunk {chunk_index}/{chunks_count} (numpy)"
+                )
+            if engine_sr is None:
+                engine_sr = sr
+            elif engine_sr != sr:
+                logger.warning(
+                    f"{log_prefix}: inconsistent sample rate on chunk {chunk_index} ({sr} Hz vs "
+                    f"{engine_sr} Hz); continuing with first chunk rate."
+                )
+            chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+            segments.append(_ensure_mono_waveform_1d(chunk_np))
     if engine_sr is None:
         raise RuntimeError(f"{log_prefix}: could not determine engine sample rate.")
     return segments, engine_sr

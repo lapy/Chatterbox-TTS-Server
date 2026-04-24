@@ -3,8 +3,11 @@ import io
 import logging
 import shutil
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
+
+import torch
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
@@ -27,7 +30,6 @@ from config import (
 from models import CustomTTSRequest, ErrorResponse
 from tts_orchestration import (
     build_text_chunks,
-    make_synthesize_chunk_partial,
     resolve_synthesis_params_custom,
     synthesize_text_chunks_async,
 )
@@ -75,7 +77,9 @@ async def custom_tts_endpoint(
     Returns audio as a stream (WAV or Opus).
     """
     perf_monitor = utils.PerformanceMonitor(
-        enabled=config_manager.get_bool("server.enable_performance_monitor", False)
+        enabled=config_manager.get_bool("server.enable_performance_monitor", False),
+        request_id=str(uuid.uuid4())[:12],
+        cuda_sync=config_manager.get_bool("server.performance_cuda_sync", False),
     )
     perf_monitor.record("TTS request received")
 
@@ -178,7 +182,6 @@ async def custom_tts_endpoint(
             if audio_prompt_path_for_engine
             else None
         )
-        synthesize_fn = make_synthesize_chunk_partial(path_for_synth, params)
         timestamp_str = time.strftime("%Y%m%d_%H%M%S")
         param_tag = (
             f"T{params.temperature:.1f}_E{params.exaggeration:.1f}_W{params.cfg_weight:.1f}".replace(
@@ -204,7 +207,16 @@ async def custom_tts_endpoint(
                 output_format=output_format_str,
                 sse=False,
                 log_prefix="/tts stream",
-                synthesize_chunk_sync=synthesize_fn,
+                locked_synthesis={
+                    "audio_prompt_path": path_for_synth,
+                    "temperature": params.temperature,
+                    "exaggeration": params.exaggeration,
+                    "cfg_weight": params.cfg_weight,
+                    "seed": params.seed,
+                    "language": params.language,
+                    "speed_factor": params.speed_factor,
+                },
+                perf_monitor=perf_monitor,
             ),
             media_type=_get_audio_media_type(output_format_str),
             headers=headers,
@@ -243,6 +255,16 @@ async def custom_tts_endpoint(
             perf_monitor=perf_monitor,
             log_prefix="/tts",
         )
+
+        if params.speed_factor != 1.0:
+            sped_t = torch.from_numpy(
+                final_audio_np.astype(np.float32, copy=False)
+            )
+            sped_t, engine_output_sample_rate = utils.apply_speed_factor(
+                sped_t, engine_output_sample_rate, params.speed_factor
+            )
+            final_audio_np = sped_t.cpu().numpy().squeeze().astype(np.float32)
+            perf_monitor.record("/tts speed_factor applied (post-stitch)")
 
     except ValueError as e_concat:
         logger.error(f"Audio concatenation/stitching failed: {e_concat}", exc_info=True)
@@ -288,7 +310,8 @@ async def custom_tts_endpoint(
     logger.info(
         f"Successfully generated audio: {download_filename}, {len(encoded_audio_bytes)} bytes, type {media_type}."
     )
-    logger.debug(perf_monitor.report())
+    if perf_monitor.enabled:
+        logger.info(perf_monitor.report(log_level=logging.INFO))
 
     # Optional: Save to disk if enabled
     if config_manager.get_bool("audio_output.save_to_disk", False):

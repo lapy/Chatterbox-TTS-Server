@@ -6,9 +6,12 @@ import asyncio
 import base64
 import json
 import logging
+import queue
 import shutil
+import threading
+import time
 from contextlib import suppress
-from typing import AsyncIterator, Callable, List, Optional, Tuple
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 import librosa
 import numpy as np
@@ -333,35 +336,6 @@ def _finalize_stitched_tts_audio(
 
 
 # --- End Audio Stitching Helper Functions ---
-def _synthesize_tts_chunk_sync(
-    chunk_text: str,
-    audio_prompt_path_str: Optional[str],
-    *,
-    temperature: float,
-    exaggeration: float,
-    cfg_weight: float,
-    seed: int,
-    language: str,
-    speed_factor: float,
-) -> Tuple[np.ndarray, int]:
-    """Return mono float32 waveform in [-1, 1] and engine sample rate (UI / /tts streaming)."""
-    audio_tensor, sr = engine.synthesize(
-        text=chunk_text,
-        audio_prompt_path=audio_prompt_path_str,
-        temperature=temperature,
-        exaggeration=exaggeration,
-        cfg_weight=cfg_weight,
-        seed=seed,
-        language=language,
-    )
-    if audio_tensor is None or sr is None:
-        raise RuntimeError("TTS engine failed to synthesize audio for a text chunk.")
-    if speed_factor != 1.0:
-        audio_tensor, _ = utils.apply_speed_factor(audio_tensor, sr, speed_factor)
-    chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
-    return _ensure_mono_waveform_1d(chunk_np), sr
-
-
 def _float32_to_pcm_s16le_bytes(
     wave_f32: np.ndarray, orig_sr: int, target_sr: int
 ) -> bytes:
@@ -374,6 +348,78 @@ def _float32_to_pcm_s16le_bytes(
         w = librosa.resample(y=w, orig_sr=orig_sr, target_sr=target_sr)
     w = np.clip(w, -1.0, 1.0)
     return (w * 32767.0).astype(np.int16).tobytes()
+
+
+async def async_iter_locked_pcm_s16le(
+    text_chunks: List[str],
+    target_sample_rate: int,
+    locked_synthesis: Dict[str, Any],
+    *,
+    perf_monitor: Optional[Any] = None,
+    log_prefix: str = "PCM stream",
+) -> AsyncIterator[bytes]:
+    """
+    Yield s16le mono PCM chunks (with inter-chunk gaps) under a single inference lock.
+    Used by OpenAI-compatible raw PCM streaming.
+    """
+    n = len(text_chunks)
+    if n == 0:
+        return
+
+    inter_chunk_gap_bytes = np.zeros(
+        int(target_sample_rate * 0.03), dtype=np.int16
+    ).tobytes()
+    pcm_queue: queue.Queue = queue.Queue(maxsize=8)
+    thread_exc: List[BaseException] = []
+
+    def _producer() -> None:
+        try:
+            speed = float(locked_synthesis.get("speed_factor", 1.0))
+            for i, (audio_tensor, sr) in enumerate(
+                engine.iter_synthesize_under_lock(
+                    text_chunks,
+                    locked_synthesis.get("audio_prompt_path"),
+                    float(locked_synthesis["temperature"]),
+                    float(locked_synthesis["exaggeration"]),
+                    float(locked_synthesis["cfg_weight"]),
+                    int(locked_synthesis["seed"]),
+                    str(locked_synthesis["language"]),
+                    perf_monitor=perf_monitor,
+                    log_prefix=f"{log_prefix} engine",
+                )
+            ):
+                if speed != 1.0:
+                    audio_tensor, sr = utils.apply_speed_factor(
+                        audio_tensor, sr, speed
+                    )
+                chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+                wave = _ensure_mono_waveform_1d(chunk_np)
+                pcm_queue.put(
+                    _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate)
+                )
+                if i < n - 1:
+                    pcm_queue.put(inter_chunk_gap_bytes)
+            pcm_queue.put(None)
+        except BaseException as exc:
+            thread_exc.append(exc)
+            pcm_queue.put(None)
+
+    threading.Thread(target=_producer, daemon=True).start()
+    stream_t0 = time.monotonic()
+    first_pcm = True
+    while True:
+        item = await asyncio.to_thread(pcm_queue.get)
+        if item is None:
+            if thread_exc:
+                raise thread_exc[0]
+            break
+        if first_pcm and perf_monitor is not None:
+            perf_monitor.record_duration(
+                f"{log_prefix} streaming TTFB (first PCM ready)",
+                time.monotonic() - stream_t0,
+            )
+            first_pcm = False
+        yield item
 
 
 def _get_audio_media_type(output_format: str) -> str:
@@ -458,8 +504,19 @@ async def _stream_encoded_audio_from_pcm(
     output_format: str,
     sse: bool,
     log_prefix: str,
-    synthesize_chunk_sync: Callable[[str], Tuple[np.ndarray, int]],
+    synthesize_chunk_sync: Optional[Callable[[str], Tuple[np.ndarray, int]]] = None,
+    locked_synthesis: Optional[Dict[str, Any]] = None,
+    perf_monitor: Optional[Any] = None,
 ) -> AsyncIterator[bytes]:
+    """
+    Stream encoded audio via ffmpeg. Use ``locked_synthesis`` for multi-chunk requests
+    so reference conditioning is not corrupted between chunks (single inference lock).
+    """
+    if locked_synthesis is None and synthesize_chunk_sync is None:
+        raise ValueError(
+            f"{log_prefix}: provide locked_synthesis or synthesize_chunk_sync"
+        )
+
     ffmpeg_path = shutil.which("ffmpeg")
     if not ffmpeg_path:
         raise RuntimeError(
@@ -500,21 +557,88 @@ async def _stream_encoded_audio_from_pcm(
     async def _writer() -> None:
         nonlocal writer_error
         pcm_samples_written = 0
+        stream_t0 = time.monotonic()
+        first_pcm_logged = False
         try:
-            for i, chunk_text in enumerate(text_chunks):
-                wave, sr = await run_in_threadpool(
-                    synthesize_chunk_sync,
-                    chunk_text,
-                )
-                pcm = _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate)
-                proc.stdin.write(pcm)
-                await proc.stdin.drain()
-                pcm_samples_written += len(pcm) // 2
+            if locked_synthesis is not None:
+                pcm_queue: queue.Queue = queue.Queue(maxsize=4)
+                thread_exc: List[BaseException] = []
 
-                if i < len(text_chunks) - 1:
-                    proc.stdin.write(inter_chunk_gap_bytes)
+                def _producer() -> None:
+                    try:
+                        n = len(text_chunks)
+                        speed = float(locked_synthesis.get("speed_factor", 1.0))
+                        for i, (audio_tensor, sr) in enumerate(
+                            engine.iter_synthesize_under_lock(
+                                text_chunks,
+                                locked_synthesis.get("audio_prompt_path"),
+                                float(locked_synthesis["temperature"]),
+                                float(locked_synthesis["exaggeration"]),
+                                float(locked_synthesis["cfg_weight"]),
+                                int(locked_synthesis["seed"]),
+                                str(locked_synthesis["language"]),
+                                perf_monitor=perf_monitor,
+                                log_prefix=f"{log_prefix} engine",
+                            )
+                        ):
+                            if speed != 1.0:
+                                audio_tensor, sr = utils.apply_speed_factor(
+                                    audio_tensor, sr, speed
+                                )
+                            chunk_np = (
+                                audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+                            )
+                            wave = _ensure_mono_waveform_1d(chunk_np)
+                            pcm = _float32_to_pcm_s16le_bytes(
+                                wave, sr, target_sample_rate
+                            )
+                            pcm_queue.put(pcm)
+                            if i < n - 1:
+                                pcm_queue.put(inter_chunk_gap_bytes)
+                        pcm_queue.put(None)
+                    except BaseException as exc:
+                        thread_exc.append(exc)
+                        pcm_queue.put(None)
+
+                threading.Thread(target=_producer, daemon=True).start()
+
+                while True:
+                    item = await asyncio.to_thread(pcm_queue.get)
+                    if item is None:
+                        if thread_exc:
+                            raise thread_exc[0]
+                        break
+                    if not first_pcm_logged and perf_monitor is not None:
+                        perf_monitor.record_duration(
+                            f"{log_prefix} streaming TTFB (first PCM ready)",
+                            time.monotonic() - stream_t0,
+                        )
+                        first_pcm_logged = True
+                    proc.stdin.write(item)
                     await proc.stdin.drain()
-                    pcm_samples_written += len(inter_chunk_gap_bytes) // 2
+                    pcm_samples_written += len(item) // 2
+            else:
+                assert synthesize_chunk_sync is not None
+                for i, chunk_text in enumerate(text_chunks):
+                    wave, sr = await run_in_threadpool(
+                        synthesize_chunk_sync,
+                        chunk_text,
+                    )
+                    pcm = _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate)
+                    if not first_pcm_logged and perf_monitor is not None:
+                        perf_monitor.record_duration(
+                            f"{log_prefix} streaming TTFB (first PCM ready)",
+                            time.monotonic() - stream_t0,
+                        )
+                        first_pcm_logged = True
+                    proc.stdin.write(pcm)
+                    await proc.stdin.drain()
+                    pcm_samples_written += len(pcm) // 2
+
+                    if i < len(text_chunks) - 1:
+                        proc.stdin.write(inter_chunk_gap_bytes)
+                        await proc.stdin.drain()
+                        pcm_samples_written += len(inter_chunk_gap_bytes) // 2
 
             if output_format == "mp3":
                 pad_samples = min_mp3_pcm_samples - pcm_samples_written

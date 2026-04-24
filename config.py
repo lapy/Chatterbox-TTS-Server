@@ -61,8 +61,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "cors_allow_all": False,
         # Allowed origins when cors_allow_all is False (e.g. ["http://localhost:3000"]).
         "cors_origins": [],
-        # Verbose timing logs for /tts (off by default).
+        # Verbose timing logs for /tts, streaming, and OpenAI speech (off by default).
         "enable_performance_monitor": False,
+        # When performance monitor is on, call torch.cuda.synchronize() around engine
+        # timings so logs reflect GPU work (adds overhead; for profiling only).
+        "performance_cuda_sync": False,
         "log_file_path": str(
             DEFAULT_LOGS_PATH / "tts_server.log"
         ),  # Path to the server log file.
@@ -84,6 +87,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             DEFAULT_REFERENCE_AUDIO_PATH
         ),  # Directory for reference audio files for cloning.
         "default_voice_id": "default_sample.wav",  # Default voice file to use if none is specified.
+        # Max chunks per engine.synthesize_batch call (single threadpool hop). 0 = unlimited (all chunks in one batch).
+        "chunk_batch_size": 0,
     },
     "paths": {  # General configurable paths for the application.
         "model_cache": str(

@@ -422,10 +422,142 @@
                                                     name="audio_output.sample_rate" class="form-input small">
                                             </div>
                                             <div class="form-group">
+                                                <label for="config-tts-engine-chunk_batch_size"
+                                                    class="form-label small">Chunk batch size (0 = all chunks in one batch)</label>
+                                                <input type="number" id="config-tts-engine-chunk_batch_size"
+                                                    name="tts_engine.chunk_batch_size" class="form-input small"
+                                                    min="0">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-use_ngrok" class="checkbox-label">
+                                                    <input type="checkbox" id="config-server-use_ngrok"
+                                                        name="server.use_ngrok" class="form-checkbox">
+                                                    <span>Enable ngrok tunnel</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-use_auth" class="checkbox-label">
+                                                    <input type="checkbox" id="config-server-use_auth"
+                                                        name="server.use_auth" class="form-checkbox">
+                                                    <span>Require admin authentication</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-auth_username" class="form-label small">Admin
+                                                    Username</label>
+                                                <input type="text" id="config-server-auth_username"
+                                                    name="server.auth_username" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-auth_password" class="form-label small">Admin
+                                                    Password</label>
+                                                <input type="password" id="config-server-auth_password"
+                                                    name="server.auth_password" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-cors_allow_all" class="checkbox-label">
+                                                    <input type="checkbox" id="config-server-cors_allow_all"
+                                                        name="server.cors_allow_all" class="form-checkbox">
+                                                    <span>Allow all CORS origins</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-cors_origins" class="form-label small">CORS
+                                                    Origins (comma-separated)</label>
+                                                <input type="text" id="config-server-cors_origins"
+                                                    name="server.cors_origins" class="form-input small"
+                                                    placeholder="https://example.com,https://app.local">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-enable_performance_monitor" class="checkbox-label">
+                                                    <input type="checkbox" id="config-server-enable_performance_monitor"
+                                                        name="server.enable_performance_monitor" class="form-checkbox">
+                                                    <span>Enable performance monitor (latency logs, request IDs)</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-performance_cuda_sync" class="checkbox-label">
+                                                    <input type="checkbox" id="config-server-performance_cuda_sync"
+                                                        name="server.performance_cuda_sync" class="form-checkbox">
+                                                    <span>CUDA-sync engine timings (profiling only; adds latency)</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-log_file_path" class="form-label small">Log
+                                                    File Path</label>
+                                                <input type="text" id="config-server-log_file_path"
+                                                    name="server.log_file_path" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-log_file_max_size_mb"
+                                                    class="form-label small">Log Max Size (MB)</label>
+                                                <input type="number" id="config-server-log_file_max_size_mb"
+                                                    name="server.log_file_max_size_mb" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-log_file_backup_count"
+                                                    class="form-label small">Log Backup Count</label>
+                                                <input type="number" id="config-server-log_file_backup_count"
+                                                    name="server.log_file_backup_count" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-ssl_certfile" class="form-label small">SSL
+                                                    Cert File</label>
+                                                <input type="text" id="config-server-ssl_certfile"
+                                                    name="server.ssl_certfile" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-server-ssl_keyfile" class="form-label small">SSL Key
+                                                    File</label>
+                                                <input type="text" id="config-server-ssl_keyfile"
+                                                    name="server.ssl_keyfile" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-model-repo_id" class="form-label small">Model
+                                                    Repository ID</label>
+                                                <select id="config-model-repo_id" name="model.repo_id"
+                                                    class="form-select small">
+                                                    <option value="chatterbox-turbo">chatterbox-turbo</option>
+                                                    <option value="chatterbox">chatterbox</option>
+                                                    <option value="chatterbox-multilingual">chatterbox-multilingual</option>
+                                                </select>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-audio_output-max_reference_duration_sec"
+                                                    class="form-label small">Max Reference Duration (sec)</label>
+                                                <input type="number" id="config-audio_output-max_reference_duration_sec"
+                                                    name="audio_output.max_reference_duration_sec" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
                                                 <label for="config-audio_output-save_to_disk" class="checkbox-label">
                                                     <input type="checkbox" id="config-audio_output-save_to_disk"
                                                         name="audio_output.save_to_disk" class="form-checkbox">
                                                     <span>Save generated audio to disk</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-ui-title" class="form-label small">UI Title</label>
+                                                <input type="text" id="config-ui-title" name="ui.title"
+                                                    class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-ui-show_language_select" class="checkbox-label">
+                                                    <input type="checkbox" id="config-ui-show_language_select"
+                                                        name="ui.show_language_select" class="form-checkbox">
+                                                    <span>Show language selector</span>
+                                                </label>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-ui-max_predefined_voices_in_dropdown"
+                                                    class="form-label small">Max Predefined Voices In Dropdown</label>
+                                                <input type="number" id="config-ui-max_predefined_voices_in_dropdown"
+                                                    name="ui.max_predefined_voices_in_dropdown" class="form-input small">
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="config-debug-save_intermediate_audio" class="checkbox-label">
+                                                    <input type="checkbox" id="config-debug-save_intermediate_audio"
+                                                        name="debug.save_intermediate_audio" class="form-checkbox">
+                                                    <span>Save intermediate debug audio</span>
                                                 </label>
                                             </div>
                                             <div class="form-grid__full mt-4 flex-row flex-wrap items-center gap-4">

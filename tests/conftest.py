@@ -13,8 +13,24 @@ import torch
 def make_engine_stub():
     """Minimal engine API used by server, routes, and audio_pipeline tests."""
 
-    def _fake_synthesize(**kwargs):
+    def _fake_synthesize(
+        text="",
+        audio_prompt_path=None,
+        temperature=0.8,
+        exaggeration=0.5,
+        cfg_weight=0.5,
+        seed=0,
+        language="en",
+        **_,
+    ):
         return torch.zeros(8000, dtype=torch.float32), 24000
+
+    def _fake_synthesize_batch(jobs, perf_monitor=None, log_prefix=""):
+        return [_fake_synthesize(**job) for job in jobs]
+
+    def _fake_iter(chunks, path, *args, **kwargs):
+        for _c in chunks:
+            yield torch.zeros(4000, dtype=torch.float32), 24000
 
     def _info():
         return {
@@ -31,6 +47,8 @@ def make_engine_stub():
     stub.reload_model = lambda: True
     stub.unload_model = lambda: True
     stub.synthesize = _fake_synthesize
+    stub.synthesize_batch = _fake_synthesize_batch
+    stub.iter_synthesize_under_lock = _fake_iter
     stub.get_model_info = _info
     stub.MODEL_LOADED = True
     return stub

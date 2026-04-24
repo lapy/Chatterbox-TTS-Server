@@ -4,9 +4,11 @@
 import gc
 import logging
 import random
+import threading
+import time
 import numpy as np
 import torch
-from typing import Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from pathlib import Path
 
 from chatterbox.tts import ChatterboxTTS  # Main TTS engine class
@@ -89,6 +91,12 @@ model_device: Optional[str] = (
 # Track which model type is loaded
 loaded_model_type: Optional[str] = None  # "original" or "turbo"
 loaded_model_class_name: Optional[str] = None  # "ChatterboxTTS" or "ChatterboxTurboTTS"
+MODEL_INFERENCE_LOCK = threading.RLock()
+
+
+def _cuda_sync_if_requested() -> None:
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
 
 
 def set_seed(seed_value: int):
@@ -375,7 +383,64 @@ def load_model() -> bool:
         return False
 
 
-def synthesize(
+def _prepare_reference_audio_unlocked(
+    audio_prompt_path: str,
+    exaggeration: float,
+    *,
+    norm_loudness: bool = True,
+) -> None:
+    """Run Chatterbox prepare_conditionals once (same work as generate() does when a path is set)."""
+    if not MODEL_LOADED or chatterbox_model is None:
+        raise RuntimeError("TTS model is not loaded.")
+    if loaded_model_type == "turbo":
+        chatterbox_model.prepare_conditionals(
+            audio_prompt_path,
+            exaggeration=exaggeration,
+            norm_loudness=norm_loudness,
+        )
+    else:
+        chatterbox_model.prepare_conditionals(
+            audio_prompt_path,
+            exaggeration=exaggeration,
+        )
+
+
+def _generate_waveform_unlocked(
+    text: str,
+    *,
+    temperature: float,
+    exaggeration: float,
+    cfg_weight: float,
+    language: str,
+) -> torch.Tensor:
+    """Run generate() without reference audio path (uses self.conds prepared earlier or builtin)."""
+    if loaded_model_type == "multilingual":
+        return chatterbox_model.generate(
+            text=text,
+            language_id=language,
+            audio_prompt_path=None,
+            temperature=temperature,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+        )
+    if loaded_model_type == "turbo":
+        return chatterbox_model.generate(
+            text=text,
+            audio_prompt_path=None,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            temperature=temperature,
+        )
+    return chatterbox_model.generate(
+        text=text,
+        audio_prompt_path=None,
+        temperature=temperature,
+        exaggeration=exaggeration,
+        cfg_weight=cfg_weight,
+    )
+
+
+def _synthesize_unlocked(
     text: str,
     audio_prompt_path: Optional[str] = None,
     temperature: float = 0.8,
@@ -383,9 +448,19 @@ def synthesize(
     cfg_weight: float = 0.5,
     seed: int = 0,
     language: str = "en",
+    *,
+    perf_monitor: Any = None,
+    chunk_index: Optional[int] = None,
+    chunk_total: Optional[int] = None,
+    log_prefix: str = "TTS",
 ) -> Tuple[Optional[torch.Tensor], Optional[int]]:
     """
     Synthesizes audio from text using the loaded TTS model.
+
+    When ``audio_prompt_path`` is set, reference conditioning is prepared explicitly
+    (timed) and ``generate`` runs with ``audio_prompt_path=None`` so we never pay
+    ``prepare_conditionals`` twice. For chunked requests, pass ``None`` on follow-up
+    chunks to reuse ``self.conds`` (must hold ``MODEL_INFERENCE_LOCK`` across them).
 
     Args:
         text: The text to synthesize.
@@ -401,8 +476,6 @@ def synthesize(
         A tuple containing the audio waveform (torch.Tensor) and the sample rate (int),
         or (None, None) if synthesis fails.
     """
-    global chatterbox_model
-
     if not MODEL_LOADED or chatterbox_model is None:
         logger.error("TTS model is not loaded. Cannot synthesize audio.")
         return None, None
@@ -413,7 +486,7 @@ def synthesize(
             logger.info(f"Applying user-provided seed for generation: {seed}")
             set_seed(seed)
         else:
-            logger.info(
+            logger.debug(
                 "Using default (potentially random) generation behavior as seed is 0."
             )
 
@@ -423,24 +496,47 @@ def synthesize(
             f"language={language}"
         )
 
-        # Call the core model's generate method
-        # Multilingual model requires language_id parameter
-        if loaded_model_type == "multilingual":
-            wav_tensor = chatterbox_model.generate(
-                text=text,
-                language_id=language,
-                audio_prompt_path=audio_prompt_path,
-                temperature=temperature,
-                exaggeration=exaggeration,
-                cfg_weight=cfg_weight,
+        chunk_tag = ""
+        if chunk_index is not None and chunk_total is not None:
+            chunk_tag = f" chunk {chunk_index}/{chunk_total}"
+
+        prepare_sec = 0.0
+        if audio_prompt_path:
+            t0 = time.monotonic()
+            _prepare_reference_audio_unlocked(
+                str(audio_prompt_path),
+                exaggeration,
+                norm_loudness=True,
             )
-        else:
-            wav_tensor = chatterbox_model.generate(
-                text=text,
-                audio_prompt_path=audio_prompt_path,
-                temperature=temperature,
-                exaggeration=exaggeration,
-                cfg_weight=cfg_weight,
+            prepare_sec = time.monotonic() - t0
+            if perf_monitor is not None:
+                if getattr(perf_monitor, "cuda_sync", False):
+                    _cuda_sync_if_requested()
+                perf_monitor.record_duration(
+                    f"{log_prefix} prepare_conditionals{chunk_tag}",
+                    prepare_sec,
+                )
+
+        t1 = time.monotonic()
+        if perf_monitor is not None and getattr(perf_monitor, "cuda_sync", False):
+            _cuda_sync_if_requested()
+
+        wav_tensor = _generate_waveform_unlocked(
+            text=text,
+            temperature=temperature,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            language=language,
+        )
+
+        if perf_monitor is not None and getattr(perf_monitor, "cuda_sync", False):
+            _cuda_sync_if_requested()
+        gen_sec = time.monotonic() - t1
+        if perf_monitor is not None:
+            perf_monitor.record_duration(
+                f"{log_prefix} model_generate{chunk_tag}",
+                gen_sec,
+                extra=f"(prepare {prepare_sec:.4f}s)" if audio_prompt_path else None,
             )
 
         # The ChatterboxTTS.generate method already returns a CPU tensor.
@@ -449,6 +545,131 @@ def synthesize(
     except Exception as e:
         logger.error(f"Error during TTS synthesis: {e}", exc_info=True)
         return None, None
+
+
+def synthesize(
+    text: str,
+    audio_prompt_path: Optional[str] = None,
+    temperature: float = 0.8,
+    exaggeration: float = 0.5,
+    cfg_weight: float = 0.5,
+    seed: int = 0,
+    language: str = "en",
+    *,
+    perf_monitor: Any = None,
+    chunk_index: Optional[int] = None,
+    chunk_total: Optional[int] = None,
+    log_prefix: str = "TTS",
+) -> Tuple[Optional[torch.Tensor], Optional[int]]:
+    """
+    Thread-safe wrapper around synthesis for callers that submit one job at a time.
+    A single lock protects the shared model instance and global RNG seed mutations.
+    """
+    with MODEL_INFERENCE_LOCK:
+        return _synthesize_unlocked(
+            text=text,
+            audio_prompt_path=audio_prompt_path,
+            temperature=temperature,
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+            seed=seed,
+            language=language,
+            perf_monitor=perf_monitor,
+            chunk_index=chunk_index,
+            chunk_total=chunk_total,
+            log_prefix=log_prefix,
+        )
+
+
+def synthesize_batch(
+    jobs: List[Dict[str, Any]],
+    *,
+    perf_monitor: Any = None,
+    log_prefix: str = "TTS",
+) -> List[Tuple[Optional[torch.Tensor], Optional[int]]]:
+    """
+    Run a batch of synthesis jobs against the single loaded model instance.
+    This does not load extra weights; it serializes access under one lock and
+    amortizes threadpool/locking overhead for chunked requests.
+    """
+    if not isinstance(jobs, list) or not jobs:
+        return []
+
+    n_jobs = len(jobs)
+    results: List[Tuple[Optional[torch.Tensor], Optional[int]]] = []
+    with MODEL_INFERENCE_LOCK:
+        for offset, job in enumerate(jobs):
+            chunk_idx = job.get("chunk_index")
+            chunk_tot = job.get("chunk_total")
+            if chunk_idx is None:
+                chunk_idx = offset + 1
+            if chunk_tot is None:
+                chunk_tot = n_jobs
+            results.append(
+                _synthesize_unlocked(
+                    text=str(job.get("text", "")),
+                    audio_prompt_path=job.get("audio_prompt_path"),
+                    temperature=float(job.get("temperature", 0.8)),
+                    exaggeration=float(job.get("exaggeration", 0.5)),
+                    cfg_weight=float(job.get("cfg_weight", 0.5)),
+                    seed=int(job.get("seed", 0)),
+                    language=str(job.get("language", "en")),
+                    perf_monitor=perf_monitor,
+                    chunk_index=int(chunk_idx),
+                    chunk_total=int(chunk_tot),
+                    log_prefix=log_prefix,
+                )
+            )
+    return results
+
+
+def iter_synthesize_under_lock(
+    text_chunks: List[str],
+    audio_prompt_path_str: Optional[str],
+    temperature: float,
+    exaggeration: float,
+    cfg_weight: float,
+    seed: int,
+    language: str,
+    *,
+    perf_monitor: Any = None,
+    log_prefix: str = "TTS stream",
+) -> Iterator[Tuple[torch.Tensor, int]]:
+    """
+    Synthesize multiple text chunks under a single MODEL_INFERENCE_LOCK hold so
+    reference conditionals are not clobbered between chunks by other requests.
+
+    First chunk uses ``audio_prompt_path_str`` when set; later chunks reuse
+    ``chatterbox_model.conds`` (passing None as the reference path).
+    """
+    if not text_chunks:
+        return
+    n = len(text_chunks)
+    with MODEL_INFERENCE_LOCK:
+        for i, chunk_text in enumerate(text_chunks):
+            path: Optional[str]
+            if i == 0:
+                path = audio_prompt_path_str
+            else:
+                path = None
+            audio_tensor, sr = _synthesize_unlocked(
+                text=chunk_text,
+                audio_prompt_path=path,
+                temperature=temperature,
+                exaggeration=exaggeration,
+                cfg_weight=cfg_weight,
+                seed=seed,
+                language=language,
+                perf_monitor=perf_monitor,
+                chunk_index=i + 1,
+                chunk_total=n,
+                log_prefix=log_prefix,
+            )
+            if audio_tensor is None or sr is None:
+                raise RuntimeError(
+                    f"{log_prefix}: engine failed to synthesize chunk {i + 1}/{n}."
+                )
+            yield audio_tensor, sr
 
 
 def unload_model() -> bool:

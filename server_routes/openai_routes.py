@@ -5,18 +5,19 @@ import json
 import logging
 import shutil
 import time
+import uuid
 import numpy as np
+import torch
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from starlette.concurrency import run_in_threadpool
 
 import engine
 import utils
 from audio_pipeline import (
     _finalize_stitched_tts_audio,
-    _float32_to_pcm_s16le_bytes,
     _get_audio_media_type,
     _stream_encoded_audio_from_pcm,
+    async_iter_locked_pcm_s16le,
 )
 from config import (
     config_manager,
@@ -28,7 +29,6 @@ from config import (
 from models import OpenAISpeechRequest
 from tts_orchestration import (
     build_text_chunks,
-    make_synthesize_chunk_partial,
     resolve_synthesis_params_openai,
     synthesize_text_chunks_async,
 )
@@ -83,6 +83,15 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
         )
 
     try:
+        perf_monitor = utils.PerformanceMonitor(
+            enabled=config_manager.get_bool(
+                "server.enable_performance_monitor", False
+            ),
+            request_id=str(uuid.uuid4())[:12],
+            cuda_sync=config_manager.get_bool("server.performance_cuda_sync", False),
+        )
+        perf_monitor.record("OpenAI speech request received")
+
         params = resolve_synthesis_params_openai(request)
 
         split_enabled = config_manager.get_bool(
@@ -95,6 +104,9 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
             chunk_size=chunk_size_cfg,
             chunk_size_min=50,
             chunk_size_max=1000,
+        )
+        perf_monitor.record(
+            f"OpenAI speech text split into {len(text_chunks)} chunk(s)"
         )
 
         if not text_chunks:
@@ -148,21 +160,27 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
             stream_headers["X-Stream-Audio-Codec"] = "mp3"
             stream_headers["X-Stream-Container"] = "mp3"
 
-        synthesize_fn = make_synthesize_chunk_partial(
-            str(audio_prompt_path), params
-        )
+        locked = {
+            "audio_prompt_path": str(audio_prompt_path),
+            "temperature": params.temperature,
+            "exaggeration": params.exaggeration,
+            "cfg_weight": params.cfg_weight,
+            "seed": params.seed,
+            "language": params.language,
+            "speed_factor": params.speed_factor,
+        }
 
         if effective_stream_format == "audio":
 
             async def raw_audio_stream():
-                n = len(text_chunks)
-                for i, chunk_text in enumerate(text_chunks):
-                    wave, sr = await run_in_threadpool(synthesize_fn, chunk_text)
-                    pcm = _float32_to_pcm_s16le_bytes(wave, sr, target_pcm_sr)
+                async for pcm in async_iter_locked_pcm_s16le(
+                    text_chunks,
+                    target_pcm_sr,
+                    locked,
+                    perf_monitor=perf_monitor,
+                    log_prefix="OpenAI speech pcm",
+                ):
                     yield pcm
-                    if i < n - 1 and n > 1:
-                        gap = int(target_pcm_sr * 0.03)
-                        yield np.zeros(gap, dtype=np.int16).tobytes()
 
             if request.response_format == "pcm":
                 stream_iter = raw_audio_stream()
@@ -173,7 +191,8 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
                     output_format=request.response_format,
                     sse=False,
                     log_prefix="OpenAI speech",
-                    synthesize_chunk_sync=synthesize_fn,
+                    locked_synthesis=locked,
+                    perf_monitor=perf_monitor,
                 )
             return StreamingResponse(
                 stream_iter,
@@ -184,23 +203,16 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
         if effective_stream_format == "sse":
 
             async def sse_audio_stream():
-                n = len(text_chunks)
-                for i, chunk_text in enumerate(text_chunks):
-                    wave, sr = await run_in_threadpool(synthesize_fn, chunk_text)
-                    if request.response_format == "pcm":
-                        pcm = _float32_to_pcm_s16le_bytes(wave, sr, target_pcm_sr)
-                        b64 = base64.standard_b64encode(pcm).decode("ascii")
-                        if i < n - 1 and n > 1:
-                            gap = int(target_pcm_sr * 0.03)
-                            gap_pcm = np.zeros(gap, dtype=np.int16).tobytes()
+                async for pcm in async_iter_locked_pcm_s16le(
+                    text_chunks,
+                    target_pcm_sr,
+                    locked,
+                    perf_monitor=perf_monitor,
+                    log_prefix="OpenAI speech sse pcm",
+                ):
+                    b64 = base64.standard_b64encode(pcm).decode("ascii")
                     payload = json.dumps({"type": "speech.audio.delta", "audio": b64})
                     yield f"data: {payload}\n\n".encode("utf-8")
-                    if request.response_format == "pcm" and i < n - 1 and n > 1:
-                        gap_b64 = base64.standard_b64encode(gap_pcm).decode("ascii")
-                        gap_payload = json.dumps(
-                            {"type": "speech.audio.delta", "audio": gap_b64}
-                        )
-                        yield f"data: {gap_payload}\n\n".encode("utf-8")
                 done = json.dumps({"type": "speech.audio.done"})
                 yield f"data: {done}\n\n".encode("utf-8")
 
@@ -213,7 +225,8 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
                     output_format=request.response_format,
                     sse=True,
                     log_prefix="OpenAI speech",
-                    synthesize_chunk_sync=synthesize_fn,
+                    locked_synthesis=locked,
+                    perf_monitor=perf_monitor,
                 )
 
             return StreamingResponse(
@@ -226,16 +239,26 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
             text_chunks,
             str(audio_prompt_path),
             params,
-            perf_monitor=None,
+            perf_monitor=perf_monitor,
             log_prefix="OpenAI speech",
         )
 
         final_audio_np = _finalize_stitched_tts_audio(
             all_audio_segments_np,
             engine_sr,
-            perf_monitor=None,
+            perf_monitor=perf_monitor,
             log_prefix="OpenAI speech",
         )
+
+        if params.speed_factor != 1.0:
+            sped_t = torch.from_numpy(
+                final_audio_np.astype(np.float32, copy=False)
+            )
+            sped_t, engine_sr = utils.apply_speed_factor(
+                sped_t, engine_sr, params.speed_factor
+            )
+            final_audio_np = sped_t.cpu().numpy().squeeze().astype(np.float32)
+            perf_monitor.record("OpenAI speech speed_factor applied (post-stitch)")
 
         encoded_audio = utils.encode_audio(
             audio_array=final_audio_np,
@@ -246,6 +269,13 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
 
         if encoded_audio is None:
             raise HTTPException(status_code=500, detail="Failed to encode audio.")
+
+        perf_monitor.record(
+            f"OpenAI speech encoded ({request.response_format}) "
+            f"{len(encoded_audio)} bytes"
+        )
+        if perf_monitor.enabled:
+            logger.info(perf_monitor.report(log_level=logging.INFO))
 
         media_type = _get_audio_media_type(request.response_format)
 

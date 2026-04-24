@@ -264,6 +264,44 @@ def _is_supported_non_verbal_cue(candidate: str) -> bool:
 
 
 # --- Audio Processing Utilities ---
+# Prepend before MP3/Opus so decoder priming / Layer-III delay does not clip the first words.
+LOSSY_ENCODE_LEADING_PAD_SEC = 0.08
+# Append after speech so encoders (LAME, libopus) can emit complete final frames; avoids cut-off mid-word.
+LOSSY_ENCODE_TRAILING_FLUSH_SEC = 0.35
+
+
+def _prepend_lossy_encode_leading_silence(
+    audio: np.ndarray, sample_rate: int
+) -> np.ndarray:
+    if audio is None or audio.size == 0:
+        return audio
+    sec = float(LOSSY_ENCODE_LEADING_PAD_SEC)
+    if sec <= 0:
+        return audio
+    n = max(0, int(sample_rate * sec))
+    if n == 0:
+        return audio
+    pad = np.zeros(n, dtype=np.float32)
+    a = audio.astype(np.float32, copy=False)
+    return np.concatenate([pad, a])
+
+
+def _append_lossy_encode_trailing_silence(
+    audio: np.ndarray, sample_rate: int
+) -> np.ndarray:
+    if audio is None or audio.size == 0:
+        return audio
+    sec = float(LOSSY_ENCODE_TRAILING_FLUSH_SEC)
+    if sec <= 0:
+        return audio
+    n = max(0, int(sample_rate * sec))
+    if n == 0:
+        return audio
+    pad = np.zeros(n, dtype=np.float32)
+    a = audio.astype(np.float32, copy=False)
+    return np.concatenate([a, pad])
+
+
 def encode_audio(
     audio_array: np.ndarray,
     sample_rate: int,
@@ -364,6 +402,12 @@ def encode_audio(
                         f"Opus encoding may fail or produce poor quality."
                     )
                     # Proceed with current rate, soundfile might handle it or fail.
+            audio_to_write = _prepend_lossy_encode_leading_silence(
+                audio_to_write, rate_to_write
+            )
+            audio_to_write = _append_lossy_encode_trailing_silence(
+                audio_to_write, rate_to_write
+            )
             sf.write(
                 output_buffer,
                 audio_to_write,
@@ -393,13 +437,19 @@ def encode_audio(
             output_buffer.write(audio_int16.tobytes())
 
         elif output_format == "mp3":
-            audio_clipped = np.clip(audio_array, -1.0, 1.0)
+            audio_padded = _prepend_lossy_encode_leading_silence(
+                audio_array, sample_rate
+            )
+            audio_padded = _append_lossy_encode_trailing_silence(
+                audio_padded, sample_rate
+            )
+            audio_clipped = np.clip(audio_padded, -1.0, 1.0)
             audio_int16 = (audio_clipped * 32767).astype(np.int16)
             audio_segment = AudioSegment(
-            audio_int16.tobytes(),
-            frame_rate=sample_rate,
-            sample_width=2,
-            channels=1,
+                audio_int16.tobytes(),
+                frame_rate=sample_rate,
+                sample_width=2,
+                channels=1,
             )
             audio_segment.export(output_buffer, format="mp3")
 
@@ -993,6 +1043,37 @@ def remove_long_unvoiced_segments(
 
 
 # --- Text Processing Utilities ---
+def _inside_dialogue_quotation_at(text: str, idx: int) -> bool:
+    """
+    True if position ``idx`` falls inside dialogue quotation so ``.?!`` must not
+    end a sentence there. Handles ASCII ``"`` pairs and Unicode “ (U+201C) / ” (U+201D).
+
+    Inch-style marks like ``5"`` (quote immediately after a digit) do not toggle state.
+    """
+    if idx <= 0:
+        return False
+    ascii_parity = 0
+    curly_depth = 0
+    i = 0
+    n = len(text)
+    while i < idx:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if c == "\u201c":
+            curly_depth += 1
+        elif c == "\u201d":
+            curly_depth = max(0, curly_depth - 1)
+        elif c == '"':
+            if i > 0 and text[i - 1].isdigit():
+                pass
+            else:
+                ascii_parity ^= 1
+        i += 1
+    return curly_depth > 0 or ascii_parity == 1
+
+
 def _is_valid_sentence_end(text: str, period_index: int) -> bool:
     """
     Checks if a period at a given index in the text is likely a valid sentence terminator,
@@ -1043,6 +1124,8 @@ def _split_text_by_punctuation(text: str) -> List[str]:
         slice_end_after_punctuation = match.start(1) + 1 + len(match.group(2) or "")
 
         if punctuation_char in ["!", "?"]:
+            if _inside_dialogue_quotation_at(text, punctuation_char_index):
+                continue
             current_sentence_text = text[
                 last_split_index:slice_end_after_punctuation
             ].strip()
@@ -1061,6 +1144,8 @@ def _split_text_by_punctuation(text: str) -> List[str]:
                 continue
 
             if _is_valid_sentence_end(text, punctuation_char_index):
+                if _inside_dialogue_quotation_at(text, punctuation_char_index):
+                    continue
                 current_sentence_text = text[
                     last_split_index:slice_end_after_punctuation
                 ].strip()

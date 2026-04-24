@@ -3,12 +3,9 @@ from __future__ import annotations
 import utils
 
 
+
 def test_chunk_text_keeps_normal_parenthetical_prose_inside_sentence():
-    text = (
-        "When we are already feeling unstable in one area of our lives "
-        "(the relationship), a threat in another area (the career) can create "
-        "a cascading failure feeling."
-    )
+    text = """This is a heavy blow, especially on a day when your emotional reserves are already low. It’s completely natural to feel a surge of worry when you see the "circle of safety" around you shrinking."""
 
     chunks = utils.chunk_text_by_sentences(text, 300)
 
@@ -58,3 +55,36 @@ def test_normalize_markdown_for_tts_strips_emojis():
     text = "We can do this 💪🙂🚀. Keep going ✅"
     normalized = utils.normalize_markdown_for_tts(text)
     assert normalized == "We can do this . Keep going"
+
+
+def test_split_into_sentences_keeps_periods_inside_double_quoted_dialogue():
+    text = (
+        'The Move: Send a message. "Hey, I need to stop at the store. '
+        'See you later." The Benefit: rest.'
+    )
+    sentences = utils.split_into_sentences(text)
+    assert len(sentences) == 2, sentences
+    assert sentences[0] == "The Move: Send a message."
+    # Internal periods must not break the quoted line into separate sentences.
+    assert sentences[1].startswith('"Hey,')
+    assert "stop at the store." in sentences[1] and "See you later." in sentences[1]
+    assert "The Benefit: rest." in sentences[1]
+
+
+def test_split_into_sentences_inch_marks_do_not_toggle_quote_state():
+    text = 'The panel is 5" tall. Next sentence.'
+    sentences = utils.split_into_sentences(text)
+    assert len(sentences) == 2
+    assert sentences[0].endswith('tall.')
+    assert sentences[1].startswith("Next")
+
+
+def test_chunk_text_does_not_split_quoted_line_with_internal_period():
+    text = (
+        'Intro. "First sentence in quotes. Second sentence in quotes." Outro.'
+    )
+    chunks = utils.chunk_text_by_sentences(text, 80)
+    joined = " ".join(chunks)
+    assert "First sentence" in joined
+    assert "Second sentence" in joined
+    assert joined.count('"') >= 2

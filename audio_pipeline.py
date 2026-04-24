@@ -560,6 +560,17 @@ async def _stream_encoded_audio_from_pcm(
         stream_t0 = time.monotonic()
         first_pcm_logged = False
         try:
+            lead_pad_samples = 0
+            if output_format in ("mp3", "opus"):
+                lead_pad_samples = max(
+                    int(target_sample_rate * utils.LOSSY_ENCODE_LEADING_PAD_SEC),
+                    int(1600 * target_sample_rate // 44100),
+                )
+            if lead_pad_samples > 0:
+                proc.stdin.write(b"\x00\x00" * lead_pad_samples)
+                await proc.stdin.drain()
+                pcm_samples_written += lead_pad_samples
+
             if locked_synthesis is not None:
                 pcm_queue: queue.Queue = queue.Queue(maxsize=4)
                 thread_exc: List[BaseException] = []
@@ -639,6 +650,18 @@ async def _stream_encoded_audio_from_pcm(
                         proc.stdin.write(inter_chunk_gap_bytes)
                         await proc.stdin.drain()
                         pcm_samples_written += len(inter_chunk_gap_bytes) // 2
+
+            # Trailing PCM silence so libmp3lame / libopus finish the last frame(s) instead
+            # of cutting off speech (common when stdin closes immediately after content).
+            trail_flush = 0
+            if output_format in ("mp3", "opus"):
+                trail_flush = int(
+                    target_sample_rate * utils.LOSSY_ENCODE_TRAILING_FLUSH_SEC
+                )
+            if trail_flush > 0:
+                proc.stdin.write(b"\x00\x00" * trail_flush)
+                await proc.stdin.drain()
+                pcm_samples_written += trail_flush
 
             if output_format == "mp3":
                 pad_samples = min_mp3_pcm_samples - pcm_samples_written

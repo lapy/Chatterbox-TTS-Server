@@ -118,12 +118,12 @@ def _chatterbox_git_ref() -> str:
                 return line[0].strip()
     except OSError:
         pass
-    return "cc0357396d9c73fc1e6c544ee40bb596020edd09"
+    return "df73ac81662c9354e0d408832a876ddd72a42480"
 
 
 CHATTERBOX_GIT_REF = _chatterbox_git_ref()
 CHATTERBOX_REPO = (
-    f"git+https://github.com/devnen/chatterbox-v2.git@{CHATTERBOX_GIT_REF}"
+    f"git+https://github.com/lapy/chatterbox-v2.git@{CHATTERBOX_GIT_REF}"
 )
 
 # Timeout settings (seconds)

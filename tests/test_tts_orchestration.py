@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 import torch
 
+import tts_orchestration
+from config import config_manager
 from models import CustomTTSRequest, OpenAISpeechRequest
 from tts_orchestration import (
     ResolvedSynthesisParams,
@@ -245,7 +247,15 @@ def test_synthesize_text_chunks_batch_splits_when_chunk_batch_size_set(monkeypat
         return [(mapping[job["text"]], 24000) for job in jobs]
 
     monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
-    monkeypatch.setattr("tts_orchestration.config_manager.get_int", lambda _k, _d: 2)
+
+    def get_int_batch2(key, default=0):
+        if key == "tts_engine.parallel_chunk_workers":
+            return 1
+        if key == "tts_engine.chunk_batch_size":
+            return 2
+        return default
+
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", get_int_batch2)
 
     segments, sr = asyncio.run(
         synthesize_text_chunks_async(
@@ -262,6 +272,112 @@ def test_synthesize_text_chunks_batch_splits_when_chunk_batch_size_set(monkeypat
     assert calls == [["slow", "fast"], ["medium"]]
 
 
+def test_chunk_quality_retry_invokes_synthesize(monkeypatch):
+    """Near-silent first pass should trigger heuristic retry."""
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 99, "en", 1.0)
+    synth_calls = []
+
+    def fake_batch(jobs, perf_monitor=None, log_prefix=""):
+        return [(torch.zeros(4800, dtype=torch.float32), 24000) for _ in jobs]
+
+    def fake_synthesize(text, audio_prompt_path=None, *args, **kwargs):
+        synth_calls.append((text, audio_prompt_path))
+        return torch.ones(8000, dtype=torch.float32) * 0.2, 24000
+
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_batch)
+    monkeypatch.setattr(engine_module, "synthesize", fake_synthesize)
+
+    def get_int_q(key, default=0):
+        if key == "tts_engine.chunk_quality_max_retries":
+            return 2
+        if key == "tts_engine.parallel_chunk_workers":
+            return 1
+        if key == "tts_engine.chunk_batch_size":
+            return 0
+        return default
+
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", get_int_q)
+
+    segments, sr = asyncio.run(
+        synthesize_text_chunks_async(
+            ["This is a longer phrase that should not be silent."],
+            None,
+            params,
+            perf_monitor=None,
+            log_prefix="test",
+        )
+    )
+    assert sr == 24000
+    assert synth_calls
+    assert float(np.max(np.abs(segments[0]))) > 0.01
+
+
+def test_chunk_asr_mismatch_triggers_resynthesis(monkeypatch):
+    """ASR validation failure should schedule a chunk resynthesis like heuristic failure."""
+    synth_calls = []
+
+    def fake_batch(jobs, perf_monitor=None, log_prefix=""):
+        return [(torch.ones(96_000, dtype=torch.float32) * 0.12, 24000) for _ in jobs]
+
+    def fake_synthesize(text, audio_prompt_path=None, *args, **kwargs):
+        synth_calls.append(text)
+        return torch.ones(96_000, dtype=torch.float32) * 0.12, 24000
+
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_batch)
+    monkeypatch.setattr(engine_module, "synthesize", fake_synthesize)
+
+    asr_calls = {"n": 0}
+
+    def fake_tm(seg, sr, text):
+        asr_calls["n"] += 1
+        if asr_calls["n"] == 1:
+            return "asr_low_similarity_0.10"
+        return None
+
+    monkeypatch.setattr(
+        tts_orchestration.asr_validation,
+        "transcription_mismatch_reason",
+        fake_tm,
+    )
+
+    orig_gb = config_manager.get_bool
+
+    def get_bool_patched(key, default=None):
+        if key == "asr.enabled":
+            return True
+        return orig_gb(key, default)
+
+    monkeypatch.setattr(config_manager, "get_bool", get_bool_patched)
+
+    orig_get_int = config_manager.get_int
+
+    def get_int_patched(key, default=0):
+        if key == "tts_engine.chunk_quality_max_retries":
+            return 2
+        if key == "tts_engine.parallel_chunk_workers":
+            return 1
+        if key == "tts_engine.chunk_batch_size":
+            return 0
+        return orig_get_int(key, default)
+
+    monkeypatch.setattr(config_manager, "get_int", get_int_patched)
+
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 1, "en", 1.0)
+    segments, sr = asyncio.run(
+        synthesize_text_chunks_async(
+            ["This is enough text for both heuristics and ASR length gates."],
+            None,
+            params,
+            perf_monitor=None,
+            log_prefix="test",
+        )
+    )
+    assert sr == 24000
+    assert len(synth_calls) == 1
+    assert asr_calls["n"] == 2
+    assert segments[0].size > 0
+
+
 def test_chunked_reference_path_only_on_first_job(monkeypatch):
     """Later chunks must not pass audio_prompt_path so conditioning is reused."""
     params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 0, "en", 1.0)
@@ -272,7 +388,15 @@ def test_chunked_reference_path_only_on_first_job(monkeypatch):
         return [(torch.tensor([1.0], dtype=torch.float32), 24000) for _ in jobs]
 
     monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
-    monkeypatch.setattr("tts_orchestration.config_manager.get_int", lambda _k, _d: 0)
+
+    def get_int_seq(key, default=0):
+        if key == "tts_engine.parallel_chunk_workers":
+            return 1
+        if key == "tts_engine.chunk_batch_size":
+            return 0
+        return default
+
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", get_int_seq)
 
     asyncio.run(
         synthesize_text_chunks_async(
@@ -284,6 +408,58 @@ def test_chunked_reference_path_only_on_first_job(monkeypatch):
         )
     )
     assert captured == [[("/voices/ref.wav", "chunk a"), (None, "chunk b")]]
+
+
+def test_parallel_workers_pass_reference_per_chunk_and_call_parallel_engine(monkeypatch):
+    """Extended-style overlap: ref path on every chunk, synthesize_batch_parallel, derived seeds."""
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 42, "en", 1.0)
+    parallel_calls = []
+    batch_calls = []
+
+    def fake_parallel(jobs, *, max_workers, perf_monitor=None, log_prefix=""):
+        parallel_calls.append(
+            (max_workers, [(j.get("audio_prompt_path"), j["seed"]) for j in jobs])
+        )
+        return [
+            (torch.tensor([float(i + 1)], dtype=torch.float32), 24000)
+            for i in range(len(jobs))
+        ]
+
+    def fake_batch(jobs, perf_monitor=None, log_prefix=""):
+        batch_calls.append(jobs)
+        raise AssertionError("sequential batch should not be used when parallel > 1")
+
+    monkeypatch.setattr(engine_module, "synthesize_batch_parallel", fake_parallel)
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_batch)
+
+    def get_int_par(key, default=0):
+        if key == "tts_engine.parallel_chunk_workers":
+            return 3
+        if key == "tts_engine.chunk_batch_size":
+            return 0
+        return default
+
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", get_int_par)
+
+    segments, sr = asyncio.run(
+        synthesize_text_chunks_async(
+            ["chunk a", "chunk b"],
+            "/voices/ref.wav",
+            params,
+            perf_monitor=None,
+            log_prefix="test",
+        )
+    )
+    assert sr == 24000
+    assert [float(s.reshape(-1)[0]) for s in segments] == [1.0, 2.0]
+    assert len(parallel_calls) == 1
+    assert parallel_calls[0][0] == 3
+    paths_seeds = parallel_calls[0][1]
+    assert paths_seeds == [
+        ("/voices/ref.wav", 506952163),
+        ("/voices/ref.wav", 1013904284),
+    ]
+    assert batch_calls == []
 
 
 def test_synthesize_text_chunks_batch_does_not_apply_speed_factor(monkeypatch):

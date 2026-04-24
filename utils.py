@@ -206,8 +206,61 @@ VERSION_PATTERN = re.compile(
 POTENTIAL_END_PATTERN = re.compile(r'([.!?])(["\']?)(\s+|$)')
 # Pattern to detect start-of-line bullet points or numbered lists.
 BULLET_POINT_PATTERN = re.compile(r"(?:^|\n)\s*([-•*]|\d+\.)\s+")
-# Placeholder for non-verbal cues or special instructions within text (e.g., (laughs), (sighs)).
-NON_VERBAL_CUE_PATTERN = re.compile(r"(\([\w\s'-]+\))")
+# Markdown normalization patterns for TTS input cleanup.
+MD_HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
+MD_UNORDERED_LIST_PATTERN = re.compile(r"^\s*[-+*]\s+", re.MULTILINE)
+MD_ORDERED_LIST_PATTERN = re.compile(r"^\s*(\d+)\.\s+", re.MULTILINE)
+MD_CODE_SPAN_PATTERN = re.compile(r"`([^`]+)`")
+MD_EMPHASIS_PATTERN = re.compile(r"(\*\*|__|\*|_)([^*_]+?)\1")
+EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F300-\U0001F5FF"  # Misc Symbols and Pictographs
+    "\U0001F600-\U0001F64F"  # Emoticons
+    "\U0001F680-\U0001F6FF"  # Transport and Map
+    "\U0001F700-\U0001F77F"  # Alchemical Symbols
+    "\U0001F780-\U0001F7FF"  # Geometric Shapes Extended
+    "\U0001F800-\U0001F8FF"  # Supplemental Arrows-C
+    "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+    "\U0001FA00-\U0001FA6F"  # Chess/Misc symbols
+    "\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+    "\U00002700-\U000027BF"  # Dingbats
+    "\U00002600-\U000026FF"  # Misc symbols
+    "]+",
+    flags=re.UNICODE,
+)
+# Parenthesized stage directions like "(laughs)" are supported, but ordinary
+# prose such as "(the relationship)" must remain part of the sentence.
+PARENTHETICAL_TEXT_PATTERN = re.compile(r"\([\w\s'-]+\)")
+SUPPORTED_NON_VERBAL_CUES: Set[str] = {
+    "laugh",
+    "laughs",
+    "chuckle",
+    "chuckles",
+    "sigh",
+    "sighs",
+    "gasp",
+    "gasps",
+    "cough",
+    "coughs",
+    "clear throat",
+    "clears throat",
+    "sniff",
+    "sniffs",
+    "groan",
+    "groans",
+    "shush",
+    "whisper",
+    "whispers",
+}
+
+
+def _is_supported_non_verbal_cue(candidate: str) -> bool:
+    """Return True only for known stage-direction style parentheticals."""
+    normalized = candidate.strip()
+    if normalized.startswith("(") and normalized.endswith(")"):
+        normalized = normalized[1:-1]
+    normalized = " ".join(normalized.lower().split())
+    return normalized in SUPPORTED_NON_VERBAL_CUES
 
 
 # --- Audio Processing Utilities ---
@@ -576,6 +629,101 @@ def apply_speed_factor(
             f"Returning original audio. Install librosa for this feature."
         )
         return audio_tensor, sample_rate
+
+
+# --- Chunk audio quality (cheap heuristics; optional retry in orchestration) ---
+
+
+def count_text_units_for_chunk_quality(text: str) -> int:
+    """Non-whitespace character count for duration / onset heuristics."""
+    return len(re.sub(r"\s+", "", text or ""))
+
+
+def estimate_voice_onset_seconds(
+    waveform_mono_f32: np.ndarray,
+    sample_rate: int,
+    *,
+    peak_fraction: float = 0.06,
+    min_run_sec: float = 0.025,
+    hop_sec: float = 0.01,
+) -> float:
+    """
+    Seconds until sustained energy exceeds ``peak_fraction * peak`` (crude voice onset).
+    Uses short windows only; no ML. For near-silent audio, returns full duration.
+    """
+    w = np.asarray(waveform_mono_f32, dtype=np.float64).reshape(-1)
+    n = w.size
+    if n == 0 or sample_rate <= 0:
+        return 0.0
+    peak = float(np.max(np.abs(w)))
+    if peak < 1e-8:
+        return float(n / sample_rate)
+    thresh = max(peak * peak_fraction, 1e-7)
+    run = max(1, int(min_run_sec * sample_rate))
+    hop = max(1, int(hop_sec * sample_rate))
+    abs_w = np.abs(w)
+    for start in range(0, n - run + 1, hop):
+        if float(np.mean(abs_w[start : start + run])) >= thresh:
+            return start / float(sample_rate)
+    return float(n / sample_rate)
+
+
+def detect_chunk_audio_glitch(
+    waveform_mono_f32: np.ndarray,
+    sample_rate: int,
+    text: str,
+    *,
+    min_text_units_for_prosody_checks: int = 28,
+    max_leading_silence_sec: float = 0.85,
+    min_duration_per_text_unit_sec: float = 0.026,
+    min_wav_duration_sec: float = 0.06,
+    quiet_peak_linear: float = 5e-5,
+) -> Optional[str]:
+    """
+    Lightweight checks for obvious TTS failures without running ASR.
+
+    Catches common issues such as near-silent output, non-finite samples, suspiciously
+    short audio for the text length, and long leading silence before any energy (often
+    seen when the start of a sentence is missing).
+
+    Returns:
+        Short machine-readable reason if a glitch is suspected, else ``None``.
+    """
+    w = np.asarray(waveform_mono_f32, dtype=np.float32).reshape(-1)
+    if w.size == 0:
+        return "empty_waveform"
+    if not np.isfinite(w).all():
+        return "non_finite_samples"
+    peak = float(np.max(np.abs(w)))
+    if peak < quiet_peak_linear:
+        return "near_silent"
+
+    duration = float(w.size / max(sample_rate, 1))
+    if duration < min_wav_duration_sec:
+        return "too_short_absolute"
+
+    units = count_text_units_for_chunk_quality(text)
+    if units >= 18:
+        min_expected = max(min_wav_duration_sec, units * min_duration_per_text_unit_sec)
+        if duration < min_expected * 0.55:
+            return "too_short_for_text"
+
+    if units >= min_text_units_for_prosody_checks:
+        onset = estimate_voice_onset_seconds(w, sample_rate)
+        if onset > max_leading_silence_sec:
+            return "excessive_leading_silence"
+
+    return None
+
+
+def derive_chunk_retry_seed(base_seed: int, chunk_index: int, retry_index: int) -> int:
+    """Deterministic seed tweak for resynthesis attempts (retry_index starts at 1)."""
+    if base_seed == 0:
+        return 0
+    mixed = (
+        int(base_seed) + int(chunk_index) * 9973 + int(retry_index) * 7919
+    ) & 0x7FFFFFFF
+    return mixed if mixed != 0 else 1
 
 
 def trim_lead_trail_silence(
@@ -983,6 +1131,33 @@ def split_into_sentences(text: str) -> List[str]:
         return _split_text_by_punctuation(text)
 
 
+def normalize_markdown_for_tts(text: str) -> str:
+    """
+    Convert common markdown formatting into plain text suitable for TTS.
+    """
+    if not text:
+        return text
+
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = MD_HEADING_PATTERN.sub("", normalized)
+    normalized = MD_UNORDERED_LIST_PATTERN.sub("", normalized)
+    normalized = MD_ORDERED_LIST_PATTERN.sub(r"\1. ", normalized)
+    normalized = MD_CODE_SPAN_PATTERN.sub(r"\1", normalized)
+
+    # Unwrap emphasis markers iteratively for nested constructs.
+    previous = None
+    while previous != normalized:
+        previous = normalized
+        normalized = MD_EMPHASIS_PATTERN.sub(r"\2", normalized)
+
+    # Strip emojis/symbol pictographs for cleaner TTS pronunciation.
+    normalized = EMOJI_PATTERN.sub("", normalized)
+
+    # Keep paragraph breaks but avoid pathological long pause blocks.
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
 def _preprocess_and_segment_text(full_text: str) -> List[Tuple[Optional[str], str]]:
     """
     Internal helper to segment text by non-verbal cues (e.g., (laughs)) and then
@@ -1002,18 +1177,28 @@ def _preprocess_and_segment_text(full_text: str) -> List[Tuple[Optional[str], st
 
     placeholder_tag: Optional[str] = None
     segmented_with_tags: List[Tuple[Optional[str], str]] = []
-    parts_and_cues = NON_VERBAL_CUE_PATTERN.split(full_text)
-
-    for part in parts_and_cues:
-        if not part or part.isspace():
+    cursor = 0
+    for match in PARENTHETICAL_TEXT_PATTERN.finditer(full_text):
+        matched_text = match.group(0)
+        if not _is_supported_non_verbal_cue(matched_text):
             continue
-        if NON_VERBAL_CUE_PATTERN.fullmatch(part):
-            segmented_with_tags.append((placeholder_tag, part.strip()))
-        else:
-            sentences_from_part = split_into_sentences(part.strip())
+
+        leading_text = full_text[cursor : match.start()]
+        if leading_text and not leading_text.isspace():
+            sentences_from_part = split_into_sentences(leading_text.strip())
             for sentence in sentences_from_part:
                 if sentence:
                     segmented_with_tags.append((placeholder_tag, sentence))
+
+        segmented_with_tags.append((placeholder_tag, matched_text.strip()))
+        cursor = match.end()
+
+    trailing_text = full_text[cursor:]
+    if trailing_text and not trailing_text.isspace():
+        sentences_from_part = split_into_sentences(trailing_text.strip())
+        for sentence in sentences_from_part:
+            if sentence:
+                segmented_with_tags.append((placeholder_tag, sentence))
 
     if not segmented_with_tags and full_text.strip():
         segmented_with_tags.append((placeholder_tag, full_text.strip()))
@@ -1046,7 +1231,8 @@ def chunk_text_by_sentences(
     if chunk_size <= 0:
         chunk_size = float("inf")
 
-    processed_segments = _preprocess_and_segment_text(full_text)
+    normalized_text = normalize_markdown_for_tts(full_text)
+    processed_segments = _preprocess_and_segment_text(normalized_text)
     if not processed_segments:
         return []
 

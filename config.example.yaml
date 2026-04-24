@@ -30,6 +30,21 @@ tts_engine:
   default_voice_id: default_sample.wav
   # Max chunks per engine batch (0 = all chunks in one batch, lowest Python overhead).
   chunk_batch_size: 0
+  # Parallel chunk threads (1 = sequential). >1 matches Chatterbox-TTS-Extended-style overlap; see README.
+  parallel_chunk_workers: 1
+  # Heuristic glitch detection (duration, silence, onset); retry each chunk up to N times (0 = off).
+  chunk_quality_max_retries: 0
+
+# Optional: OpenAI-compatible POST /v1/audio/transcriptions (runs when chunk_quality_max_retries > 0).
+asr:
+  enabled: false
+  openai_compatible_base_url: ""
+  access_token: ""
+  model: whisper-1
+  min_similarity: 0.82
+  timeout_sec: 120
+  language: ""
+  skip_if_text_shorter_than: 12
 
 paths:
   model_cache: model_cache

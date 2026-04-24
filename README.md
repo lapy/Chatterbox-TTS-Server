@@ -2,13 +2,13 @@
 
 **Self-host Resemble AI's [Chatterbox](https://github.com/resemble-ai/chatterbox) open-source TTS family (Original + Multilingual + Turbo) behind an OpenAI‑compatible API and a modern Web UI. The complete lineup includes the original high-quality model, multilingual support for 23 languages, and Chatterbox‑Turbo—a streamlined 350M-parameter model with dramatically improved throughput and native paralinguistic tags like `[laugh]`, `[cough]`, and `[chuckle]` for more expressive voice agents and narration. Features voice cloning, large text processing via intelligent chunking, audiobook generation, and consistent, reproducible voices using built-in ready-to-use voices and a generation seed feature.**
 
-> 🚀 **Try it now!** Test the full TTS server with voice cloning and audiobook generation in Google Colab - no installation required! To use it, please run cells 1 through 4 one at a time. After running cell 4, click on the "https://localhost:8004" link that appears in the output, and your web browser will open the UI from the .colab.dev domain. Read the instructions [here](https://github.com/devnen/Chatterbox-TTS-Server/blob/main/README_Colab.md).
+> 🚀 **Try it now!** Test the full TTS server with voice cloning and audiobook generation in Google Colab - no installation required! To use it, please run cells 1 through 4 one at a time. After running cell 4, click on the "https://localhost:8004" link that appears in the output, and your web browser will open the UI from the .colab.dev domain. Read the instructions [here](https://github.com/lapy/Chatterbox-TTS-Server/blob/main/README_Colab.md).
 > 
-> [![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
+> [![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lapy/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
 
-This server is based on the architecture and UI of our [Dia-TTS-Server](https://github.com/devnen/Dia-TTS-Server) project but uses the distinct `chatterbox-tts` engine. Runs accelerated on NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) GPUs, with a fallback to CPU. Make sure you also check our [Kitten-TTS-Server](https://github.com/devnen/Kitten-TTS-Server) project.
+This server is based on the architecture and UI of our [Dia-TTS-Server](https://github.com/lapy/Dia-TTS-Server) project but uses the distinct `chatterbox-tts` engine. Runs accelerated on NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) GPUs, with a fallback to CPU. Make sure you also check our [Kitten-TTS-Server](https://github.com/lapy/Kitten-TTS-Server) project.
 
-[![Project Link](https://img.shields.io/badge/GitHub-devnen/Chatterbox--TTS--Server-blue?style=for-the-badge&logo=github)](https://github.com/devnen/Chatterbox-TTS-Server)
+[![Project Link](https://img.shields.io/badge/GitHub-lapy/Chatterbox--TTS--Server-blue?style=for-the-badge&logo=github)](https://github.com/lapy/Chatterbox-TTS-Server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 [![Python Version](https://img.shields.io/badge/Python-3.10_(required)-blue.svg?style=for-the-badge)](https://www.python.org/downloads/release/python-31011/)
 [![Framework](https://img.shields.io/badge/Framework-FastAPI-green.svg?style=for-the-badge)](https://fastapi.tiangolo.com/)
@@ -19,7 +19,7 @@ This server is based on the architecture and UI of our [Dia-TTS-Server](https://
 [![ROCm Compatible](https://img.shields.io/badge/AMD_ROCm-Compatible-ED1C24?style=for-the-badge&logo=amd&logoColor=white)](https://rocm.docs.amd.com/)
 [![MPS Compatible](https://img.shields.io/badge/Apple_MPS-Compatible-000000?style=for-the-badge&logo=apple&logoColor=white)](https://developer.apple.com/metal/)
 [![API](https://img.shields.io/badge/OpenAI_Compatible_API-Ready-000000?style=for-the-badge&logo=openai&logoColor=white)](https://platform.openai.com/docs/api-reference)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lapy/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
 
 <div align="center">
   <img src="static/screenshot-d.png" alt="Chatterbox TTS Server Web UI - Dark Mode" width="33%" />
@@ -105,7 +105,7 @@ This server is based on the architecture and UI of our [Dia-TTS-Server](https://
 
 The [Chatterbox TTS model by Resemble AI](https://github.com/resemble-ai/chatterbox) provides capabilities for generating high-quality speech. This project builds upon that foundation by providing a robust [FastAPI](https://fastapi.tiangolo.com/) server that makes Chatterbox significantly easier to use and integrate.
 
-**🚀 Want to try it instantly?** [Launch the live demo in Google Colab](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb) - no installation needed!
+**🚀 Want to try it instantly?** [Launch the live demo in Google Colab](https://colab.research.google.com/github/lapy/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb) - no installation needed!
 
 The server expects plain text input for synthesis and we solve the complexity of setting up and running the model by offering:
 
@@ -126,7 +126,7 @@ This server is your gateway to leveraging Chatterbox's TTS capabilities seamless
 ## ✨ Key Features of This Server
 
 **🔥 Live Demo Available:**
-*   **🚀 [One-Click Google Colab Demo](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb):** Try the full server with voice cloning and audiobook generation instantly in your browser - no local installation required!
+*   **🚀 [One-Click Google Colab Demo](https://colab.research.google.com/github/lapy/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb):** Try the full server with voice cloning and audiobook generation instantly in your browser - no local installation required!
 
 This server application enhances the underlying `chatterbox-tts` engine with the following:
 
@@ -219,6 +219,8 @@ This server application enhances the underlying `chatterbox-tts` engine with the
 *   **Performance & Configuration:**
     *   💻 **GPU Acceleration:** Automatically uses NVIDIA CUDA, Apple MPS, or AMD ROCm if available, falls back to CPU.
     *   ⏱️ **Latency profiling:** Enable `server.enable_performance_monitor` for per-request / per-chunk logs (including `prepare_conditionals` vs `model_generate`). Use `server.performance_cuda_sync` only when profiling CUDA (adds overhead). Chunked synthesis reuses voice embeddings under one inference lock; set `tts_engine.chunk_batch_size: 0` to minimize Python batching overhead.
+    *   **Parallel chunks:** `tts_engine.parallel_chunk_workers` (default `1`) runs multiple chunk `generate` calls in a thread pool while the whole request holds the inference lock (other API calls wait). Values `>1` re-run reference conditioning per chunk (like [Chatterbox-TTS-Extended](https://github.com/petermg/Chatterbox-TTS-Extended)) and may stress GPU drivers; use `1` if you see instability. Streaming still synthesizes sequentially under one lock.
+    *   **Chunk quality retries:** `tts_engine.chunk_quality_max_retries` (default `0`) enables post-synthesis checks and re-synthesis via `engine.synthesize` with a derived seed. **Heuristics** live in `utils.detect_chunk_audio_glitch`. Optional **ASR** (`asr.*`): set `asr.enabled: true`, `asr.openai_compatible_base_url` (include `/v1`), and `asr.access_token`, or pass the token only via env `CHATTERBOX_ASR_ACCESS_TOKEN` (not written into config on load). Optional env `CHATTERBOX_ASR_OPENAI_BASE_URL` overrides the base URL. Tune `asr.min_similarity` (fuzzy match vs. reference chunk text).
     *   📊 **Benchmark script:** `python scripts/benchmark_cuda_latency.py` (requires `httpx`) hits `/tts` and `/v1/audio/speech` with short/long texts; set `CHATTERBOX_BENCH_BASE` and `CHATTERBOX_BENCH_VOICE` as needed.
     *   ⚙️ All configuration via `config.yaml`.
     *   📦 Uses standard Python virtual environments.
@@ -274,7 +276,7 @@ This project uses specific dependency files to ensure a smooth installation for 
 
 **1. Clone the Repository**
 ```bash
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+git clone https://github.com/lapy/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
 ```
 
@@ -496,7 +498,7 @@ This is the most straightforward option and works on any machine without a compa
 # Make sure your (venv) is active
 pip install --upgrade pip
 pip install -r requirements.txt
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
 ```
 
 <details>
@@ -516,7 +518,7 @@ For users with NVIDIA GPUs. This provides the best performance for RTX 20/30/40 
 # Make sure your (venv) is active
 pip install --upgrade pip
 pip install -r requirements-nvidia.txt
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
 ```
 
 **After installation, verify that PyTorch can see your GPU:**
@@ -559,7 +561,7 @@ pip install --upgrade pip
 pip install -r requirements-nvidia-cu128.txt
 
 # Step 2: Install chatterbox without dependencies (prevents PyTorch downgrade)
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
 ```
 
 ⚠️ **Critical:** The `--no-deps` flag is required to prevent PyTorch from being downgraded to a version that doesn't support Blackwell GPUs.
@@ -598,7 +600,7 @@ pip install -r requirements-rocm-init.txt
 pip install -r requirements-rocm.txt
 
 # Step 3: Install chatterbox without dependencies (prevents ROCm torch overwrite)
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
 ```
 
 ⚠️ **Critical:** The `--no-deps` flag on chatterbox-tts is required to prevent pip from replacing the ROCm PyTorch wheels with CPU-only versions from PyPI. The `start.py` launcher handles this automatically.
@@ -645,7 +647,7 @@ tts_engine:
 **Step 3: Install remaining dependencies**
 ```bash
 # Install chatterbox-tts without its dependencies to avoid conflicts
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
 
 # Install core server dependencies
 pip install fastapi 'uvicorn[standard]' librosa safetensors soundfile pydub audiotsm praat-parselmouth python-multipart requests aiofiles PyYAML watchdog unidecode inflect tqdm
@@ -678,7 +680,7 @@ Apple Silicon requires a specific installation sequence due to dependency confli
 
 **Want to test Chatterbox TTS Server immediately without any installation?**
 
-[![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
+[![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lapy/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
 
 ### Why Try the Demo?
 - ✅ **Full Web UI** with all controls and features
@@ -942,7 +944,7 @@ After you have updated the code using Method 2 or 3, complete these final steps.
 *   **For NVIDIA GPU Systems (CUDA 12.8 / Blackwell):**
     ```bash
     pip install -r requirements-nvidia-cu128.txt
-    pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+    pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
     ```
 *   **For AMD GPU Systems:**
     ```bash
@@ -1049,7 +1051,7 @@ This method uses the provided `docker-compose.yml` files to manage the container
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+git clone https://github.com/lapy/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
 ```
 
@@ -1380,7 +1382,7 @@ You can find it here: [https://opensource.org/licenses/MIT](https://opensource.o
 
 *   **Core Model:** This project utilizes the **[Chatterbox TTS model](https://github.com/resemble-ai/chatterbox)** by **[Resemble AI](https://www.resemble.ai/)**.
 *   **UI Inspiration:** Special thanks to **[Lex-au](https://github.com/Lex-au)** whose **[Orpheus-FastAPI](https://github.com/Lex-au/Orpheus-FastAPI)** project served as inspiration for the web interface design.
-*   **Similar Project:** This server shares architectural similarities with our [Dia-TTS-Server](https://github.com/devnen/Dia-TTS-Server) and [Kitten-TTS-Server](https://github.com/devnen/Kitten-TTS-Server) projects, which use different TTS engines.
+*   **Similar Project:** This server shares architectural similarities with our [Dia-TTS-Server](https://github.com/lapy/Dia-TTS-Server) and [Kitten-TTS-Server](https://github.com/lapy/Kitten-TTS-Server) projects, which use different TTS engines.
 *   **Containerization Technologies:** [Docker](https://www.docker.com/) and [NVIDIA Container Toolkit](https://github.com/NVIDIA/nvidia-docker).
 *   **Core Libraries:**
     *   [FastAPI](https://fastapi.tiangolo.com/)

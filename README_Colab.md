@@ -79,7 +79,7 @@ echo "$(ts) Installing Chatterbox package (from GitHub, no-cache, upgrade)..."
 "$MICROMAMBA" run -n cb311 pip install \
   --no-cache-dir --upgrade \
   --progress-bar on \
-  "chatterbox-tts @ git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09"
+  "chatterbox-tts @ git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480"
 
 echo "$(ts) ✅ Installation complete!"
 ```
@@ -159,7 +159,7 @@ os.chdir("/content")
 
 # Fresh clone
 sh("rm -rf /content/Chatterbox-TTS-Server", check=False)
-sh("git clone https://github.com/devnen/Chatterbox-TTS-Server.git", check=True)
+sh("git clone https://github.com/lapy/Chatterbox-TTS-Server.git", check=True)
 os.chdir(REPO_DIR)
 
 print("=== Quick system checks ===")

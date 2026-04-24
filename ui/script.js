@@ -110,6 +110,30 @@ document.addEventListener('DOMContentLoaded', async function () {
     const saveGenDefaultsBtn = document.getElementById('save-gen-defaults-btn');
     const genDefaultsStatus = document.getElementById('gen-defaults-status');
     const serverConfigForm = document.getElementById('server-config-form');
+    /** Tab buttons for server config sections (no framework; see styles `.config-tabs`). */
+    function initConfigTabs() {
+        if (!serverConfigForm) return;
+        const nav = serverConfigForm.querySelector('.config-tabs__nav');
+        if (!nav) return;
+        const tabButtons = nav.querySelectorAll('.config-tabs__tab');
+        const panels = serverConfigForm.querySelectorAll('.config-tabs__panel');
+        nav.addEventListener('click', (e) => {
+            const btn = e.target.closest('.config-tabs__tab');
+            if (!btn || !nav.contains(btn)) return;
+            e.preventDefault();
+            const id = btn.getAttribute('data-tab');
+            tabButtons.forEach((t) => {
+                const on = t === btn;
+                t.classList.toggle('is-active', on);
+                t.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            panels.forEach((p) => {
+                p.classList.toggle('is-active', p.getAttribute('data-panel') === id);
+            });
+        });
+        tabButtons.forEach((t, i) => t.setAttribute('aria-selected', i === 0 ? 'true' : 'false'));
+    }
+    initConfigTabs();
     const saveConfigBtn = document.getElementById('save-config-btn');
     const restartServerBtn = document.getElementById('restart-server-btn');
     const configStatus = document.getElementById('config-status');
@@ -1482,13 +1506,11 @@ document.addEventListener('DOMContentLoaded', async function () {
     // --- Configuration Management ---
     function displayServerConfiguration() {
         if (!serverConfigForm || !currentConfig || Object.keys(currentConfig).length === 0) return;
+        const us = currentConfig.ui_state || {};
+        const gd = currentConfig.generation_defaults || {};
         const fieldsToDisplay = {
-            "server.host": currentConfig.server?.host, "server.port": currentConfig.server?.port,
-            "tts_engine.device": currentConfig.tts_engine?.device, "tts_engine.default_voice_id": currentConfig.tts_engine?.default_voice_id,
-            "paths.model_cache": currentConfig.paths?.model_cache, "tts_engine.predefined_voices_path": currentConfig.tts_engine?.predefined_voices_path,
-            "tts_engine.reference_audio_path": currentConfig.tts_engine?.reference_audio_path, "paths.output": currentConfig.paths?.output,
-            "audio_output.format": currentConfig.audio_output?.format, "audio_output.sample_rate": currentConfig.audio_output?.sample_rate,
-            "tts_engine.chunk_batch_size": currentConfig.tts_engine?.chunk_batch_size,
+            "server.host": currentConfig.server?.host,
+            "server.port": currentConfig.server?.port,
             "server.auth_username": currentConfig.server?.auth_username,
             "server.auth_password": currentConfig.server?.auth_password,
             "server.cors_origins": Array.isArray(currentConfig.server?.cors_origins)
@@ -1500,19 +1522,64 @@ document.addEventListener('DOMContentLoaded', async function () {
             "server.ssl_certfile": currentConfig.server?.ssl_certfile,
             "server.ssl_keyfile": currentConfig.server?.ssl_keyfile,
             "model.repo_id": currentConfig.model?.repo_id,
+            "tts_engine.device": currentConfig.tts_engine?.device,
+            "tts_engine.default_voice_id": currentConfig.tts_engine?.default_voice_id,
+            "tts_engine.predefined_voices_path": currentConfig.tts_engine?.predefined_voices_path,
+            "tts_engine.reference_audio_path": currentConfig.tts_engine?.reference_audio_path,
+            "tts_engine.chunk_batch_size": currentConfig.tts_engine?.chunk_batch_size,
+            "tts_engine.parallel_chunk_workers": currentConfig.tts_engine?.parallel_chunk_workers,
+            "tts_engine.chunk_quality_max_retries": currentConfig.tts_engine?.chunk_quality_max_retries,
+            "paths.model_cache": currentConfig.paths?.model_cache,
+            "paths.output": currentConfig.paths?.output,
+            "asr.openai_compatible_base_url": currentConfig.asr?.openai_compatible_base_url,
+            "asr.access_token": currentConfig.asr?.access_token,
+            "asr.model": currentConfig.asr?.model,
+            "asr.min_similarity": currentConfig.asr?.min_similarity,
+            "asr.timeout_sec": currentConfig.asr?.timeout_sec,
+            "asr.language": currentConfig.asr?.language,
+            "asr.skip_if_text_shorter_than": currentConfig.asr?.skip_if_text_shorter_than,
+            "audio_output.format": currentConfig.audio_output?.format,
+            "audio_output.sample_rate": currentConfig.audio_output?.sample_rate,
             "audio_output.max_reference_duration_sec": currentConfig.audio_output?.max_reference_duration_sec,
+            "generation_defaults.temperature": gd.temperature,
+            "generation_defaults.exaggeration": gd.exaggeration,
+            "generation_defaults.cfg_weight": gd.cfg_weight,
+            "generation_defaults.seed": gd.seed,
+            "generation_defaults.speed_factor": gd.speed_factor,
+            "generation_defaults.language": gd.language,
             "ui.title": currentConfig.ui?.title,
             "ui.max_predefined_voices_in_dropdown": currentConfig.ui?.max_predefined_voices_in_dropdown,
+            "ui_state.last_text": us.last_text,
+            "ui_state.last_predefined_voice": us.last_predefined_voice,
+            "ui_state.last_reference_file": us.last_reference_file,
+            "ui_state.last_seed": us.last_seed,
+            "ui_state.last_chunk_size": us.last_chunk_size,
+            "ui_state.last_temperature": us.last_temperature,
+            "ui_state.last_exaggeration": us.last_exaggeration,
+            "ui_state.last_cfg_weight": us.last_cfg_weight,
+            "ui_state.last_language": us.last_language,
+            "ui_state.last_speed_factor": us.last_speed_factor,
         };
         const checkboxFields = {
-            "audio_output.save_to_disk": currentConfig.audio_output?.save_to_disk,
             "server.use_ngrok": currentConfig.server?.use_ngrok,
             "server.use_auth": currentConfig.server?.use_auth,
             "server.cors_allow_all": currentConfig.server?.cors_allow_all,
             "server.enable_performance_monitor": currentConfig.server?.enable_performance_monitor,
             "server.performance_cuda_sync": currentConfig.server?.performance_cuda_sync,
+            "asr.enabled": currentConfig.asr?.enabled,
+            "audio_output.save_to_disk": currentConfig.audio_output?.save_to_disk,
             "ui.show_language_select": currentConfig.ui?.show_language_select,
+            "ui_state.last_split_text_enabled": us.last_split_text_enabled,
+            "ui_state.last_stream_tts_enabled": us.last_stream_tts_enabled,
+            "ui_state.hide_chunk_warning": us.hide_chunk_warning,
+            "ui_state.hide_generation_warning": us.hide_generation_warning,
             "debug.save_intermediate_audio": currentConfig.debug?.save_intermediate_audio,
+        };
+        const selectFields = {
+            "ui_state.last_voice_mode": us.last_voice_mode,
+            "ui_state.last_output_format": us.last_output_format,
+            "ui_state.last_model_repo_id": us.last_model_repo_id == null ? '' : us.last_model_repo_id,
+            "ui_state.theme": us.theme,
         };
         const readonlyFields = new Set([
             "server.host",
@@ -1532,6 +1599,13 @@ document.addEventListener('DOMContentLoaded', async function () {
             const input = serverConfigForm.querySelector(`[name="${name}"]`);
             if (input) input.checked = !!checkboxFields[name];
         }
+        for (const name in selectFields) {
+            const sel = serverConfigForm.querySelector(`select[name="${name}"]`);
+            if (sel) {
+                const v = selectFields[name];
+                sel.value = v !== undefined && v !== null ? String(v) : '';
+            }
+        }
     }
     async function updateConfigStatus(button, statusElem, message, type = 'info', duration = 5000, enableButtonAfter = true) {
         const statusClasses = { success: 'text-green-600 dark:text-green-400', error: 'text-red-600 dark:text-red-400', warning: 'text-yellow-600 dark:text-yellow-400', info: 'text-indigo-600 dark:text-indigo-400', processing: 'text-yellow-600 dark:text-yellow-400 animate-pulse' };
@@ -1550,14 +1624,23 @@ document.addEventListener('DOMContentLoaded', async function () {
     if (saveConfigBtn && configStatus) {
         saveConfigBtn.addEventListener('click', async () => {
             const configDataToSave = {};
-            const inputs = serverConfigForm.querySelectorAll('input[name]:not([readonly]), select[name]:not([readonly])');
+            const nullIfEmptyNames = new Set([
+                'ui_state.last_predefined_voice',
+                'ui_state.last_reference_file',
+                'ui_state.last_model_repo_id',
+            ]);
+            const inputs = serverConfigForm.querySelectorAll(
+                'input[name]:not([readonly]), select[name]:not([readonly]), textarea[name]:not([readonly])'
+            );
             inputs.forEach(input => {
                 const keys = input.name.split('.'); let currentLevel = configDataToSave;
                 keys.forEach((key, index) => {
                     if (index === keys.length - 1) {
                         let value = input.value;
-                        if (input.type === 'number') value = parseFloat(value) || 0;
-                        else if (input.type === 'checkbox') value = input.checked;
+                        if (input.type === 'number') {
+                            const n = parseFloat(value);
+                            value = Number.isFinite(n) ? n : 0;
+                        } else if (input.type === 'checkbox') value = input.checked;
                         else if (input.name === 'server.cors_origins') {
                             value = value
                                 .split(',')
@@ -1565,6 +1648,9 @@ document.addEventListener('DOMContentLoaded', async function () {
                                 .filter(Boolean);
                         }
                         if ((input.name === 'server.ssl_certfile' || input.name === 'server.ssl_keyfile') && value === '') {
+                            value = null;
+                        }
+                        if (nullIfEmptyNames.has(input.name) && value === '') {
                             value = null;
                         }
                         currentLevel[key] = value;

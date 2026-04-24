@@ -21,7 +21,7 @@ The easiest way to install with CUDA 12.8 support is using the automated launche
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+git clone https://github.com/lapy/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
 
 # Run the launcher (double-click or run from command prompt)
@@ -34,7 +34,7 @@ When the installation menu appears, select option **[3] NVIDIA GPU (CUDA 12.8)**
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+git clone https://github.com/lapy/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
 
 # Make the launcher executable and run it
@@ -62,7 +62,7 @@ For containerized deployment with CUDA 12.8 support:
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+git clone https://github.com/lapy/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
 
 # Build and start the CUDA 12.8 container
@@ -98,7 +98,7 @@ If you prefer to install manually without using the launcher:
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+git clone https://github.com/lapy/Chatterbox-TTS-Server.git
 cd Chatterbox-TTS-Server
 
 # Create and activate virtual environment
@@ -118,7 +118,7 @@ pip install -r requirements-nvidia-cu128.txt
 
 # IMPORTANT: Install Chatterbox separately with --no-deps
 # This prevents PyTorch from being downgraded
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
 
 # Start the server
 python server.py
@@ -201,7 +201,7 @@ This error means PyTorch doesn't support your GPU's compute capability. This typ
    
    # Or manually
    pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
-   pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+   pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
    ```
 
 3. **Check supported architectures**:
@@ -335,4 +335,4 @@ docker compose up -d
 
 ## Contributing
 
-Found an issue with CUDA 12.8 support? Please [open an issue](https://github.com/devnen/Chatterbox-TTS-Server/issues) or submit a pull request.
+Found an issue with CUDA 12.8 support? Please [open an issue](https://github.com/lapy/Chatterbox-TTS-Server/issues) or submit a pull request.

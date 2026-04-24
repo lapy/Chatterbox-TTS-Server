@@ -14,7 +14,7 @@
 #
 # For manual installation, run these commands in order:
 #   pip install -r requirements-nvidia-cu128.txt
-#   pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09 s3tokenizer==0.3.0 onnx==1.16.0
+#   pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480 s3tokenizer==0.3.0 onnx==1.16.0
 # ============================================================================
 
 # --- PyTorch CUDA 12.8 Package Index ---

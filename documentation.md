@@ -2,9 +2,9 @@
 
 **Version:** 1.0.0
 **Last Updated:** 5/31/2025
-**Project Repository:** [https://github.com/devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server)
+**Project Repository:** [https://github.com/lapy/Chatterbox-TTS-Server](https://github.com/lapy/Chatterbox-TTS-Server)
 
-This server is based on the architecture and UI of our [Dia-TTS-Server](https://github.com/devnen/Dia-TTS-Server) project but uses the distinct `chatterbox-tts` engine.
+This server is based on the architecture and UI of our [Dia-TTS-Server](https://github.com/lapy/Dia-TTS-Server) project but uses the distinct `chatterbox-tts` engine.
 
 ## Table of Contents
 
@@ -275,7 +275,7 @@ Before you begin, ensure you have:
 2.  Navigate to the directory where you want to install the server.
 3.  Clone the project repository from GitHub:
     ```bash
-    git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+    git clone https://github.com/lapy/Chatterbox-TTS-Server.git
     ```
 4.  Change into the project directory:
     ```bash

@@ -345,7 +345,7 @@
 
                             <details class="collapsible" open>
                                 <summary class="collapsible__trigger">
-                                    <span>Server Configuration</span>
+                                    <span>Server &amp; application configuration</span>
                                     <svg class="collapsible__icon" viewBox="0 0 20 20" fill="currentColor">
                                         <path fill-rule="evenodd"
                                             d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
@@ -355,225 +355,392 @@
                                 <div class="collapsible__content">
                                     <div id="server-config-form">
                                         <p class="form-hint mb-4">
-                                            These settings are loaded from <code class="code">config.yaml</code> via an
-                                            API call.
-                                            <strong>Restart the server</strong> to apply changes to Host, Port, Model,
-                                            or Path settings if modified here or directly in the file.
+                                            Full <code class="code">config.yaml</code> coverage, grouped by topic.
+                                            <strong>Restart the server</strong> after changing host, port, device, or paths.
+                                            Fields marked read-only reflect the running environment; edit <code class="code">config.yaml</code> and restart to change them.
                                         </p>
-                                        <div class="form-grid">
-                                            <div class="form-group">
-                                                <label for="config-server-host" class="form-label small">Server
-                                                    Host</label>
-                                                <input type="text" id="config-server-host" name="server.host"
-                                                    class="form-input small">
+                                        <div class="config-tabs">
+                                            <div class="config-tabs__nav" role="tablist" aria-label="Configuration sections">
+                                                <button type="button" class="config-tabs__tab is-active" data-tab="network">Network &amp; security</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="logs">Logs &amp; profiling</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="model">Model &amp; paths</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="synthesis">Synthesis &amp; chunks</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="asr">ASR validation</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="audio">Audio output</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="gendef">Generation defaults</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="uidisplay">UI display</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="uistate">UI state (persisted)</button>
+                                                <button type="button" class="config-tabs__tab" data-tab="debug">Debug</button>
                                             </div>
-                                            <div class="form-group">
-                                                <label for="config-server-port" class="form-label small">Server
-                                                    Port</label>
-                                                <input type="number" id="config-server-port" name="server.port"
-                                                    class="form-input small">
+                                            <div class="config-tabs__body">
+                                                <!-- Network -->
+                                                <section class="config-tabs__panel is-active" data-panel="network" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group">
+                                                            <label for="config-server-host" class="form-label small">Server host</label>
+                                                            <input type="text" id="config-server-host" name="server.host" class="form-input small" readonly>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-port" class="form-label small">Server port</label>
+                                                            <input type="number" id="config-server-port" name="server.port" class="form-input small" readonly>
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-server-ssl_certfile" class="form-label small">SSL certificate file (HTTPS)</label>
+                                                            <input type="text" id="config-server-ssl_certfile" name="server.ssl_certfile" class="form-input small" placeholder="empty = HTTP only">
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-server-ssl_keyfile" class="form-label small">SSL private key file</label>
+                                                            <input type="text" id="config-server-ssl_keyfile" name="server.ssl_keyfile" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-use_ngrok" class="checkbox-label">
+                                                                <input type="checkbox" id="config-server-use_ngrok" name="server.use_ngrok" class="form-checkbox">
+                                                                <span>Enable ngrok tunnel</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-use_auth" class="checkbox-label">
+                                                                <input type="checkbox" id="config-server-use_auth" name="server.use_auth" class="form-checkbox">
+                                                                <span>Require admin authentication</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-auth_username" class="form-label small">Admin username</label>
+                                                            <input type="text" id="config-server-auth_username" name="server.auth_username" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-auth_password" class="form-label small">Admin password</label>
+                                                            <input type="password" id="config-server-auth_password" name="server.auth_password" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-cors_allow_all" class="checkbox-label">
+                                                                <input type="checkbox" id="config-server-cors_allow_all" name="server.cors_allow_all" class="form-checkbox">
+                                                                <span>Allow all CORS origins</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-server-cors_origins" class="form-label small">CORS origins (comma-separated)</label>
+                                                            <input type="text" id="config-server-cors_origins" name="server.cors_origins" class="form-input small" placeholder="https://app.example.com">
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- Logs -->
+                                                <section class="config-tabs__panel" data-panel="logs" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-server-log_file_path" class="form-label small">Log file path</label>
+                                                            <input type="text" id="config-server-log_file_path" name="server.log_file_path" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-log_file_max_size_mb" class="form-label small">Log max size (MB)</label>
+                                                            <input type="number" id="config-server-log_file_max_size_mb" name="server.log_file_max_size_mb" class="form-input small" min="1">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-log_file_backup_count" class="form-label small">Log backup count</label>
+                                                            <input type="number" id="config-server-log_file_backup_count" name="server.log_file_backup_count" class="form-input small" min="0">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-enable_performance_monitor" class="checkbox-label">
+                                                                <input type="checkbox" id="config-server-enable_performance_monitor" name="server.enable_performance_monitor" class="form-checkbox">
+                                                                <span>Enable performance monitor</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-server-performance_cuda_sync" class="checkbox-label">
+                                                                <input type="checkbox" id="config-server-performance_cuda_sync" name="server.performance_cuda_sync" class="form-checkbox">
+                                                                <span>CUDA sync for profiling (adds latency)</span>
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- Model & paths -->
+                                                <section class="config-tabs__panel" data-panel="model" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-model-repo_id" class="form-label small">Model repository ID</label>
+                                                            <select id="config-model-repo_id" name="model.repo_id" class="form-select small">
+                                                                <option value="chatterbox-turbo">chatterbox-turbo</option>
+                                                                <option value="chatterbox">chatterbox</option>
+                                                                <option value="chatterbox-multilingual">chatterbox-multilingual</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-tts-engine-device" class="form-label small">TTS device</label>
+                                                            <input type="text" id="config-tts-engine-device" name="tts_engine.device" class="form-input small" readonly>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-tts-engine-default_voice_id" class="form-label small">Default voice file</label>
+                                                            <input type="text" id="config-tts-engine-default_voice_id" name="tts_engine.default_voice_id" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-paths-model_cache" class="form-label small">Model cache path</label>
+                                                            <input type="text" id="config-paths-model_cache" name="paths.model_cache" class="form-input small" readonly>
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-paths-output" class="form-label small">Output path</label>
+                                                            <input type="text" id="config-paths-output" name="paths.output" class="form-input small" readonly>
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-tts-engine-predefined_voices_path" class="form-label small">Predefined voices directory</label>
+                                                            <input type="text" id="config-tts-engine-predefined_voices_path" name="tts_engine.predefined_voices_path" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-tts-engine-reference_audio_path" class="form-label small">Reference audio directory</label>
+                                                            <input type="text" id="config-tts-engine-reference_audio_path" name="tts_engine.reference_audio_path" class="form-input small">
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- Synthesis -->
+                                                <section class="config-tabs__panel" data-panel="synthesis" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group">
+                                                            <label for="config-tts-engine-chunk_batch_size" class="form-label small">Chunk batch size (0 = all in one batch)</label>
+                                                            <input type="number" id="config-tts-engine-chunk_batch_size" name="tts_engine.chunk_batch_size" class="form-input small" min="0">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-tts-engine-parallel_chunk_workers" class="form-label small">Parallel chunk workers</label>
+                                                            <input type="number" id="config-tts-engine-parallel_chunk_workers" name="tts_engine.parallel_chunk_workers" class="form-input small" min="1" max="16" step="1">
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-tts-engine-chunk_quality_max_retries" class="form-label small">Chunk quality max retries (0 = off)</label>
+                                                            <input type="number" id="config-tts-engine-chunk_quality_max_retries" name="tts_engine.chunk_quality_max_retries" class="form-input small" min="0" max="8" step="1">
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- ASR -->
+                                                <section class="config-tabs__panel" data-panel="asr" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-asr-enabled" class="checkbox-label">
+                                                                <input type="checkbox" id="config-asr-enabled" name="asr.enabled" class="form-checkbox">
+                                                                <span>Enable ASR chunk validation (OpenAI-compatible <code class="code">/v1/audio/transcriptions</code>)</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-asr-openai_compatible_base_url" class="form-label small">ASR base URL (include <code class="code">/v1</code>)</label>
+                                                            <input type="text" id="config-asr-openai_compatible_base_url" name="asr.openai_compatible_base_url" class="form-input small" placeholder="https://api.openai.com/v1">
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-asr-access_token" class="form-label small">ASR access token (Bearer). Env: <code class="code">CHATTERBOX_ASR_ACCESS_TOKEN</code></label>
+                                                            <input type="password" id="config-asr-access_token" name="asr.access_token" class="form-input small" autocomplete="off">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-asr-model" class="form-label small">ASR model id</label>
+                                                            <input type="text" id="config-asr-model" name="asr.model" class="form-input small" placeholder="whisper-1">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-asr-min_similarity" class="form-label small">Min similarity (0–1)</label>
+                                                            <input type="number" id="config-asr-min_similarity" name="asr.min_similarity" class="form-input small" min="0" max="1" step="0.01">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-asr-timeout_sec" class="form-label small">Timeout (seconds)</label>
+                                                            <input type="number" id="config-asr-timeout_sec" name="asr.timeout_sec" class="form-input small" min="5" step="1">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-asr-language" class="form-label small">Language (optional ISO code)</label>
+                                                            <input type="text" id="config-asr-language" name="asr.language" class="form-input small" placeholder="en">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-asr-skip_if_text_shorter_than" class="form-label small">Skip ASR if chunk shorter than (chars)</label>
+                                                            <input type="number" id="config-asr-skip_if_text_shorter_than" name="asr.skip_if_text_shorter_than" class="form-input small" min="0" max="500" step="1">
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- Audio output -->
+                                                <section class="config-tabs__panel" data-panel="audio" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group">
+                                                            <label for="config-audio_output-format" class="form-label small">Default audio format</label>
+                                                            <input type="text" id="config-audio_output-format" name="audio_output.format" class="form-input small" placeholder="wav">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-audio_output-sample_rate" class="form-label small">Sample rate (Hz)</label>
+                                                            <input type="number" id="config-audio_output-sample_rate" name="audio_output.sample_rate" class="form-input small" min="8000" step="1">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-audio_output-max_reference_duration_sec" class="form-label small">Max reference duration (sec)</label>
+                                                            <input type="number" id="config-audio_output-max_reference_duration_sec" name="audio_output.max_reference_duration_sec" class="form-input small" min="1">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-audio_output-save_to_disk" class="checkbox-label">
+                                                                <input type="checkbox" id="config-audio_output-save_to_disk" name="audio_output.save_to_disk" class="form-checkbox">
+                                                                <span>Save generated audio to disk</span>
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- Generation defaults -->
+                                                <section class="config-tabs__panel" data-panel="gendef" role="tabpanel">
+                                                    <p class="form-hint mb-4">File defaults for generation. The main page &quot;Save Generation Parameters&quot; also updates these.</p>
+                                                    <div class="form-grid">
+                                                        <div class="form-group">
+                                                            <label for="config-gen-temperature" class="form-label small">Temperature</label>
+                                                            <input type="number" id="config-gen-temperature" name="generation_defaults.temperature" class="form-input small" min="0" max="2" step="0.01">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-gen-exaggeration" class="form-label small">Exaggeration</label>
+                                                            <input type="number" id="config-gen-exaggeration" name="generation_defaults.exaggeration" class="form-input small" min="0" max="3" step="0.01">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-gen-cfg_weight" class="form-label small">CFG weight</label>
+                                                            <input type="number" id="config-gen-cfg_weight" name="generation_defaults.cfg_weight" class="form-input small" min="0" max="3" step="0.01">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-gen-seed" class="form-label small">Seed</label>
+                                                            <input type="number" id="config-gen-seed" name="generation_defaults.seed" class="form-input small" step="1">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-gen-speed_factor" class="form-label small">Speed factor</label>
+                                                            <input type="number" id="config-gen-speed_factor" name="generation_defaults.speed_factor" class="form-input small" min="0.25" max="4" step="0.05">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-gen-language" class="form-label small">Language code</label>
+                                                            <input type="text" id="config-gen-language" name="generation_defaults.language" class="form-input small" placeholder="en">
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- UI display -->
+                                                <section class="config-tabs__panel" data-panel="uidisplay" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-ui-title" class="form-label small">UI title (navbar)</label>
+                                                            <input type="text" id="config-ui-title" name="ui.title" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui-show_language_select" class="checkbox-label">
+                                                                <input type="checkbox" id="config-ui-show_language_select" name="ui.show_language_select" class="form-checkbox">
+                                                                <span>Show language selector</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui-max_predefined_voices_in_dropdown" class="form-label small">Max predefined voices in dropdown</label>
+                                                            <input type="number" id="config-ui-max_predefined_voices_in_dropdown" name="ui.max_predefined_voices_in_dropdown" class="form-input small" min="1" max="200">
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- UI state -->
+                                                <section class="config-tabs__panel" data-panel="uistate" role="tabpanel">
+                                                    <p class="form-hint mb-4">Last-used UI values stored in config. Usually updated automatically when you generate speech.</p>
+                                                    <div class="form-grid">
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-ui_state-last_text" class="form-label small">Last text (persisted)</label>
+                                                            <textarea id="config-ui_state-last_text" name="ui_state.last_text" class="form-textarea" rows="4"></textarea>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_voice_mode" class="form-label small">Last voice mode</label>
+                                                            <select id="config-ui_state-last_voice_mode" name="ui_state.last_voice_mode" class="form-select small">
+                                                                <option value="predefined">predefined</option>
+                                                                <option value="clone">clone</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_predefined_voice" class="form-label small">Last predefined voice file</label>
+                                                            <input type="text" id="config-ui_state-last_predefined_voice" name="ui_state.last_predefined_voice" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_reference_file" class="form-label small">Last reference file</label>
+                                                            <input type="text" id="config-ui_state-last_reference_file" name="ui_state.last_reference_file" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_seed" class="form-label small">Last seed</label>
+                                                            <input type="number" id="config-ui_state-last_seed" name="ui_state.last_seed" class="form-input small" step="1">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_chunk_size" class="form-label small">Last chunk size</label>
+                                                            <input type="number" id="config-ui_state-last_chunk_size" name="ui_state.last_chunk_size" class="form-input small" min="50" max="1000">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_split_text_enabled" class="checkbox-label">
+                                                                <input type="checkbox" id="config-ui_state-last_split_text_enabled" name="ui_state.last_split_text_enabled" class="form-checkbox">
+                                                                <span>Last: split text enabled</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_temperature" class="form-label small">Last temperature</label>
+                                                            <input type="number" id="config-ui_state-last_temperature" name="ui_state.last_temperature" class="form-input small" step="0.01">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_exaggeration" class="form-label small">Last exaggeration</label>
+                                                            <input type="number" id="config-ui_state-last_exaggeration" name="ui_state.last_exaggeration" class="form-input small" step="0.01">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_cfg_weight" class="form-label small">Last CFG weight</label>
+                                                            <input type="number" id="config-ui_state-last_cfg_weight" name="ui_state.last_cfg_weight" class="form-input small" step="0.01">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_language" class="form-label small">Last language</label>
+                                                            <input type="text" id="config-ui_state-last_language" name="ui_state.last_language" class="form-input small">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_speed_factor" class="form-label small">Last speed factor</label>
+                                                            <input type="number" id="config-ui_state-last_speed_factor" name="ui_state.last_speed_factor" class="form-input small" step="0.05">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_output_format" class="form-label small">Last output format</label>
+                                                            <select id="config-ui_state-last_output_format" name="ui_state.last_output_format" class="form-select small">
+                                                                <option value="wav">wav</option>
+                                                                <option value="mp3">mp3</option>
+                                                                <option value="opus">opus</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-last_stream_tts_enabled" class="checkbox-label">
+                                                                <input type="checkbox" id="config-ui_state-last_stream_tts_enabled" name="ui_state.last_stream_tts_enabled" class="form-checkbox">
+                                                                <span>Last: stream TTS enabled</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group form-grid__full">
+                                                            <label for="config-ui_state-last_model_repo_id" class="form-label small">Last model repo id</label>
+                                                            <select id="config-ui_state-last_model_repo_id" name="ui_state.last_model_repo_id" class="form-select small">
+                                                                <option value="">(none)</option>
+                                                                <option value="chatterbox-turbo">chatterbox-turbo</option>
+                                                                <option value="chatterbox">chatterbox</option>
+                                                                <option value="chatterbox-multilingual">chatterbox-multilingual</option>
+                                                            </select>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-hide_chunk_warning" class="checkbox-label">
+                                                                <input type="checkbox" id="config-ui_state-hide_chunk_warning" name="ui_state.hide_chunk_warning" class="form-checkbox">
+                                                                <span>Hide chunk warning modal</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-hide_generation_warning" class="checkbox-label">
+                                                                <input type="checkbox" id="config-ui_state-hide_generation_warning" name="ui_state.hide_generation_warning" class="form-checkbox">
+                                                                <span>Hide generation warning modal</span>
+                                                            </label>
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-ui_state-theme" class="form-label small">Default theme</label>
+                                                            <select id="config-ui_state-theme" name="ui_state.theme" class="form-select small">
+                                                                <option value="dark">dark</option>
+                                                                <option value="light">light</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                </section>
+                                                <!-- Debug -->
+                                                <section class="config-tabs__panel" data-panel="debug" role="tabpanel">
+                                                    <div class="form-grid">
+                                                        <div class="form-group">
+                                                            <label for="config-debug-save_intermediate_audio" class="checkbox-label">
+                                                                <input type="checkbox" id="config-debug-save_intermediate_audio" name="debug.save_intermediate_audio" class="form-checkbox">
+                                                                <span>Save intermediate debug audio</span>
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                </section>
                                             </div>
-                                            <div class="form-group">
-                                                <label for="config-tts-engine-device" class="form-label small">TTS
-                                                    Device</label>
-                                                <input type="text" id="config-tts-engine-device"
-                                                    name="tts_engine.device" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-tts-engine-default_voice_id"
-                                                    class="form-label small">Default Voice ID</label>
-                                                <input type="text" id="config-tts-engine-default_voice_id"
-                                                    name="tts_engine.default_voice_id" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-paths-model_cache" class="form-label small">Model
-                                                    Cache Path</label>
-                                                <input type="text" id="config-paths-model_cache"
-                                                    name="paths.model_cache" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-tts-engine-predefined_voices_path"
-                                                    class="form-label small">Predefined Voices Path</label>
-                                                <input type="text" id="config-tts-engine-predefined_voices_path"
-                                                    name="tts_engine.predefined_voices_path" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-tts-engine-reference_audio_path"
-                                                    class="form-label small">Reference Audio Path</label>
-                                                <input type="text" id="config-tts-engine-reference_audio_path"
-                                                    name="tts_engine.reference_audio_path" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-paths-output" class="form-label small">Output
-                                                    Path</label>
-                                                <input type="text" id="config-paths-output" name="paths.output"
-                                                    class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-audio_output-format" class="form-label small">Audio
-                                                    Output Format</label>
-                                                <input type="text" id="config-audio_output-format"
-                                                    name="audio_output.format" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-audio_output-sample_rate"
-                                                    class="form-label small">Audio Sample Rate</label>
-                                                <input type="number" id="config-audio_output-sample_rate"
-                                                    name="audio_output.sample_rate" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-tts-engine-chunk_batch_size"
-                                                    class="form-label small">Chunk batch size (0 = all chunks in one batch)</label>
-                                                <input type="number" id="config-tts-engine-chunk_batch_size"
-                                                    name="tts_engine.chunk_batch_size" class="form-input small"
-                                                    min="0">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-use_ngrok" class="checkbox-label">
-                                                    <input type="checkbox" id="config-server-use_ngrok"
-                                                        name="server.use_ngrok" class="form-checkbox">
-                                                    <span>Enable ngrok tunnel</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-use_auth" class="checkbox-label">
-                                                    <input type="checkbox" id="config-server-use_auth"
-                                                        name="server.use_auth" class="form-checkbox">
-                                                    <span>Require admin authentication</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-auth_username" class="form-label small">Admin
-                                                    Username</label>
-                                                <input type="text" id="config-server-auth_username"
-                                                    name="server.auth_username" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-auth_password" class="form-label small">Admin
-                                                    Password</label>
-                                                <input type="password" id="config-server-auth_password"
-                                                    name="server.auth_password" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-cors_allow_all" class="checkbox-label">
-                                                    <input type="checkbox" id="config-server-cors_allow_all"
-                                                        name="server.cors_allow_all" class="form-checkbox">
-                                                    <span>Allow all CORS origins</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-cors_origins" class="form-label small">CORS
-                                                    Origins (comma-separated)</label>
-                                                <input type="text" id="config-server-cors_origins"
-                                                    name="server.cors_origins" class="form-input small"
-                                                    placeholder="https://example.com,https://app.local">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-enable_performance_monitor" class="checkbox-label">
-                                                    <input type="checkbox" id="config-server-enable_performance_monitor"
-                                                        name="server.enable_performance_monitor" class="form-checkbox">
-                                                    <span>Enable performance monitor (latency logs, request IDs)</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-performance_cuda_sync" class="checkbox-label">
-                                                    <input type="checkbox" id="config-server-performance_cuda_sync"
-                                                        name="server.performance_cuda_sync" class="form-checkbox">
-                                                    <span>CUDA-sync engine timings (profiling only; adds latency)</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-log_file_path" class="form-label small">Log
-                                                    File Path</label>
-                                                <input type="text" id="config-server-log_file_path"
-                                                    name="server.log_file_path" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-log_file_max_size_mb"
-                                                    class="form-label small">Log Max Size (MB)</label>
-                                                <input type="number" id="config-server-log_file_max_size_mb"
-                                                    name="server.log_file_max_size_mb" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-log_file_backup_count"
-                                                    class="form-label small">Log Backup Count</label>
-                                                <input type="number" id="config-server-log_file_backup_count"
-                                                    name="server.log_file_backup_count" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-ssl_certfile" class="form-label small">SSL
-                                                    Cert File</label>
-                                                <input type="text" id="config-server-ssl_certfile"
-                                                    name="server.ssl_certfile" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-server-ssl_keyfile" class="form-label small">SSL Key
-                                                    File</label>
-                                                <input type="text" id="config-server-ssl_keyfile"
-                                                    name="server.ssl_keyfile" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-model-repo_id" class="form-label small">Model
-                                                    Repository ID</label>
-                                                <select id="config-model-repo_id" name="model.repo_id"
-                                                    class="form-select small">
-                                                    <option value="chatterbox-turbo">chatterbox-turbo</option>
-                                                    <option value="chatterbox">chatterbox</option>
-                                                    <option value="chatterbox-multilingual">chatterbox-multilingual</option>
-                                                </select>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-audio_output-max_reference_duration_sec"
-                                                    class="form-label small">Max Reference Duration (sec)</label>
-                                                <input type="number" id="config-audio_output-max_reference_duration_sec"
-                                                    name="audio_output.max_reference_duration_sec" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-audio_output-save_to_disk" class="checkbox-label">
-                                                    <input type="checkbox" id="config-audio_output-save_to_disk"
-                                                        name="audio_output.save_to_disk" class="form-checkbox">
-                                                    <span>Save generated audio to disk</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-ui-title" class="form-label small">UI Title</label>
-                                                <input type="text" id="config-ui-title" name="ui.title"
-                                                    class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-ui-show_language_select" class="checkbox-label">
-                                                    <input type="checkbox" id="config-ui-show_language_select"
-                                                        name="ui.show_language_select" class="form-checkbox">
-                                                    <span>Show language selector</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-ui-max_predefined_voices_in_dropdown"
-                                                    class="form-label small">Max Predefined Voices In Dropdown</label>
-                                                <input type="number" id="config-ui-max_predefined_voices_in_dropdown"
-                                                    name="ui.max_predefined_voices_in_dropdown" class="form-input small">
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="config-debug-save_intermediate_audio" class="checkbox-label">
-                                                    <input type="checkbox" id="config-debug-save_intermediate_audio"
-                                                        name="debug.save_intermediate_audio" class="form-checkbox">
-                                                    <span>Save intermediate debug audio</span>
-                                                </label>
-                                            </div>
-                                            <div class="form-grid__full mt-4 flex-row flex-wrap items-center gap-4">
-                                                <button id="save-config-btn" type="button" class="btn ghost">Save Server
-                                                    Configuration</button>
-                                                <button id="restart-server-btn" type="button" class="btn danger hidden">
-                                                    <svg class="btn__icon" xmlns="http://www.w3.org/2000/svg"
-                                                        fill="none" viewBox="0 0 24 24" stroke-width="1.5"
-                                                        stroke="currentColor">
-                                                        <path stroke-linecap="round" stroke-linejoin="round"
-                                                            d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                                                    </svg>
-                                                    Restart Server
-                                                </button>
-                                                <span id="config-status" class="form-hint hidden"></span>
-                                            </div>
+                                        </div>
+                                        <div class="form-grid__full mt-6 flex-row flex-wrap items-center gap-4">
+                                            <button id="save-config-btn" type="button" class="btn ghost">Save server configuration</button>
+                                            <button id="restart-server-btn" type="button" class="btn danger hidden">
+                                                <svg class="btn__icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                                </svg>
+                                                Restart server
+                                            </button>
+                                            <span id="config-status" class="form-hint hidden"></span>
                                         </div>
                                     </div>
                                 </div>
@@ -621,7 +788,7 @@
         <footer class="footer">
             <div class="container">
                 <div class="footer__content">
-                    <a href="https://github.com/devnen/Chatterbox-TTS-Server" target="_blank" rel="noopener noreferrer"
+                    <a href="https://github.com/lapy/Chatterbox-TTS-Server" target="_blank" rel="noopener noreferrer"
                         class="footer__link">
                         <svg class="footer__icon" xmlns="http://www.w3.org/2000/svg" fill="currentColor"
                             viewBox="0 0 16 16">

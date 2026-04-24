@@ -89,6 +89,26 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "default_voice_id": "default_sample.wav",  # Default voice file to use if none is specified.
         # Max chunks per engine.synthesize_batch call (single threadpool hop). 0 = unlimited (all chunks in one batch).
         "chunk_batch_size": 0,
+        # ThreadPoolExecutor size for chunked synthesis (Extended-style overlap). 1 = sequential under lock with cond reuse.
+        # Values >1 re-prepare reference audio per chunk when a reference path is set; see README warning.
+        "parallel_chunk_workers": 1,
+        # Fast heuristic checks on each chunk; retry synthesis up to N times per chunk (0 = disabled).
+        "chunk_quality_max_retries": 0,
+    },
+    # OpenAI-compatible ASR for optional chunk transcription checks (see tts_engine.chunk_quality_max_retries).
+    "asr": {
+        "enabled": False,
+        # e.g. https://api.openai.com/v1 or http://localhost:8080/v1
+        "openai_compatible_base_url": "",
+        "access_token": "",
+        "model": "whisper-1",
+        # SequenceMatcher ratio on normalized strings; below this triggers a retry.
+        "min_similarity": 0.82,
+        "timeout_sec": 120.0,
+        # ISO-639-1 code if the server supports it (empty = omit).
+        "language": "",
+        # Skip ASR when reference chunk has fewer non-whitespace chars than this.
+        "skip_if_text_shorter_than": 12,
     },
     "paths": {  # General configurable paths for the application.
         "model_cache": str(
@@ -421,6 +441,15 @@ class YamlConfigManager:
                 logger.warning(
                     "Invalid CHATTERBOX_SERVER_PORT=%r; ignoring.", port_override
                 )
+
+        asr_url = os.environ.get("CHATTERBOX_ASR_OPENAI_BASE_URL", "").strip()
+        if asr_url:
+            _set_nested_value(self.config, ["asr", "openai_compatible_base_url"], asr_url)
+            logger.info(
+                "Overriding asr.openai_compatible_base_url from CHATTERBOX_ASR_OPENAI_BASE_URL"
+            )
+        # CHATTERBOX_ASR_ACCESS_TOKEN is read at request time in asr_validation (not copied into
+        # config) so it cannot be accidentally persisted by save_settings.
 
     def _save_config_yaml_internal(self, config_dict_to_save: Dict[str, Any]) -> bool:
         """

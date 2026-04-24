@@ -6,6 +6,7 @@ import logging
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -621,6 +622,67 @@ def synthesize_batch(
                 )
             )
     return results
+
+
+def synthesize_batch_parallel(
+    jobs: List[Dict[str, Any]],
+    *,
+    max_workers: int,
+    perf_monitor: Any = None,
+    log_prefix: str = "TTS",
+) -> List[Tuple[Optional[torch.Tensor], Optional[int]]]:
+    """
+    Run multiple chunk jobs concurrently using a thread pool while holding
+    ``MODEL_INFERENCE_LOCK`` for the entire batch so other requests cannot
+    interleave with this one.
+
+    Workers call ``_synthesize_unlocked`` directly (they must not acquire the
+    lock). Callers should pass ``audio_prompt_path`` on every chunk that needs
+    reference cloning so jobs do not rely on ``self.conds`` left by another
+    worker.
+
+    .. note::
+        Chatterbox / PyTorch are not fully thread-safe. This mirrors the overlap
+        strategy used by Chatterbox-TTS-Extended; use ``parallel_chunk_workers: 1``
+        if you hit instability or odd audio.
+    """
+    if not isinstance(jobs, list) or not jobs:
+        return []
+
+    n_jobs = len(jobs)
+    workers = max(1, min(int(max_workers), n_jobs))
+
+    def _run_index(i: int) -> Tuple[Optional[torch.Tensor], Optional[int]]:
+        job = jobs[i]
+        chunk_idx = job.get("chunk_index")
+        chunk_tot = job.get("chunk_total")
+        if chunk_idx is None:
+            chunk_idx = i + 1
+        if chunk_tot is None:
+            chunk_tot = n_jobs
+        return _synthesize_unlocked(
+            text=str(job.get("text", "")),
+            audio_prompt_path=job.get("audio_prompt_path"),
+            temperature=float(job.get("temperature", 0.8)),
+            exaggeration=float(job.get("exaggeration", 0.5)),
+            cfg_weight=float(job.get("cfg_weight", 0.5)),
+            seed=int(job.get("seed", 0)),
+            language=str(job.get("language", "en")),
+            perf_monitor=None,
+            chunk_index=int(chunk_idx),
+            chunk_total=int(chunk_tot),
+            log_prefix=log_prefix,
+        )
+
+    with MODEL_INFERENCE_LOCK:
+        if perf_monitor is not None and getattr(perf_monitor, "enabled", False):
+            perf_monitor.record(
+                f"{log_prefix} parallel chunk pool workers={workers} jobs={n_jobs}"
+            )
+        if workers <= 1 or n_jobs <= 1:
+            return [_run_index(i) for i in range(n_jobs)]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(_run_index, range(n_jobs)))
 
 
 def iter_synthesize_under_lock(

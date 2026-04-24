@@ -123,7 +123,7 @@ def _chatterbox_git_ref() -> str:
 
 CHATTERBOX_GIT_REF = _chatterbox_git_ref()
 CHATTERBOX_REPO = (
-    f"git+https://github.com/lapy/chatterbox-v2.git@{CHATTERBOX_GIT_REF}"
+    f"git+https://github.com/devnen/chatterbox-v2.git@{CHATTERBOX_GIT_REF}"
 )
 
 # Timeout settings (seconds)

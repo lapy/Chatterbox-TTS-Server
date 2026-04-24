@@ -9,7 +9,7 @@
 # For manual installation, run these commands in order:
 #   pip install -r requirements-rocm-init.txt
 #   pip install -r requirements-rocm.txt
-#   pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480 s3tokenizer==0.3.0 onnx==1.16.0
+#   pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480 s3tokenizer==0.3.0 onnx==1.16.0
 #
 # The --no-deps flag on chatterbox-tts is critical: without it, pip will
 # replace the ROCm torch wheels with CPU-only versions from PyPI.

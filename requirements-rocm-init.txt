@@ -8,7 +8,7 @@
 # For manual installation:
 #   pip install -r requirements-rocm-init.txt
 #   pip install -r requirements-rocm.txt
-#   pip install --no-deps git+https://github.com/lapy/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
+#   pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
 
 -i https://download.pytorch.org/whl/rocm6.1
 torch==2.5.1

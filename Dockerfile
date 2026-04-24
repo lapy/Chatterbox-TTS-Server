@@ -2,7 +2,7 @@ FROM docker.io/nvidia/cuda:12.8.1-runtime-ubuntu22.04
 
 ARG RUNTIME=nvidia
 # Pinned chatterbox-v2 revision (see chatterbox_v2.ref). Override at build time if needed.
-ARG CHATTERBOX_GIT_REF=df73ac81662c9354e0d408832a876ddd72a42480
+ARG CHATTERBOX_GIT_REF=cc0357396d9c73fc1e6c544ee40bb596020edd09
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1

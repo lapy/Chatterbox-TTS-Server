@@ -498,7 +498,7 @@ This is the most straightforward option and works on any machine without a compa
 # Make sure your (venv) is active
 pip install --upgrade pip
 pip install -r requirements.txt
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 <details>
@@ -518,7 +518,7 @@ For users with NVIDIA GPUs. This provides the best performance for RTX 20/30/40 
 # Make sure your (venv) is active
 pip install --upgrade pip
 pip install -r requirements-nvidia.txt
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 **After installation, verify that PyTorch can see your GPU:**
@@ -561,7 +561,7 @@ pip install --upgrade pip
 pip install -r requirements-nvidia-cu128.txt
 
 # Step 2: Install chatterbox without dependencies (prevents PyTorch downgrade)
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 ⚠️ **Critical:** The `--no-deps` flag is required to prevent PyTorch from being downgraded to a version that doesn't support Blackwell GPUs.
@@ -600,7 +600,7 @@ pip install -r requirements-rocm-init.txt
 pip install -r requirements-rocm.txt
 
 # Step 3: Install chatterbox without dependencies (prevents ROCm torch overwrite)
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 ⚠️ **Critical:** The `--no-deps` flag on chatterbox-tts is required to prevent pip from replacing the ROCm PyTorch wheels with CPU-only versions from PyPI. The `start.py` launcher handles this automatically.
@@ -647,7 +647,7 @@ tts_engine:
 **Step 3: Install remaining dependencies**
 ```bash
 # Install chatterbox-tts without its dependencies to avoid conflicts
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 
 # Install core server dependencies
 pip install fastapi 'uvicorn[standard]' librosa safetensors soundfile pydub audiotsm praat-parselmouth python-multipart requests aiofiles PyYAML watchdog unidecode inflect tqdm
@@ -944,7 +944,7 @@ After you have updated the code using Method 2 or 3, complete these final steps.
 *   **For NVIDIA GPU Systems (CUDA 12.8 / Blackwell):**
     ```bash
     pip install -r requirements-nvidia-cu128.txt
-    pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@df73ac81662c9354e0d408832a876ddd72a42480
+    pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
     ```
 *   **For AMD GPU Systems:**
     ```bash

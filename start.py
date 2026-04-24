@@ -118,7 +118,7 @@ def _chatterbox_git_ref() -> str:
                 return line[0].strip()
     except OSError:
         pass
-    return "df73ac81662c9354e0d408832a876ddd72a42480"
+    return "cc0357396d9c73fc1e6c544ee40bb596020edd09"
 
 
 CHATTERBOX_GIT_REF = _chatterbox_git_ref()

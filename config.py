@@ -120,6 +120,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "last_exaggeration": 0.5,
         "last_cfg_weight": 0.5,
         "last_language": "en",
+        "last_speed_factor": 1.0,
+        "last_output_format": "mp3",
+        "last_stream_tts_enabled": False,
+        "last_model_repo_id": None,  # chatterbox-turbo | chatterbox | chatterbox-multilingual
         "hide_chunk_warning": False,  # Flag to hide the chunking warning modal.
         "hide_generation_warning": False,  # Flag to hide the general generation quality notice modal.
         "theme": "dark",  # Default UI theme ('dark' or 'light').

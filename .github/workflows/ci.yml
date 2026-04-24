@@ -27,7 +27,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Ruff
-        run: ruff check server.py server_routes admin_auth.py audio_pipeline.py models.py config.py tests
+        run: ruff check server.py server_routes admin_auth.py audio_pipeline.py tts_orchestration.py models.py config.py tests
 
       - name: Pytest
         run: pytest

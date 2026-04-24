@@ -25,10 +25,10 @@ paths:
   output: outputs
 generation_defaults:
   temperature: 0.8
-  exaggeration: 0.5
-  cfg_weight: 0.5
+  exaggeration: 1.25
+  cfg_weight: 0.6
   seed: 0
-  speed_factor: 1.0
+  speed_factor: 1
   language: en
 audio_output:
   format: wav
@@ -36,20 +36,43 @@ audio_output:
   max_reference_duration_sec: 30
   save_to_disk: false
 ui_state:
-  last_text: ''
+  last_text: '[sniff] So I just finished watching this film, and I''m not okay. I''m
+    really not okay. [sigh] They told me it was a "heartwarming family movie" and
+    I walked in expecting some laughs, maybe a few feel-good moments. [gasp] They
+    did not warn me about the dog. They did NOT warn me about what happens to the
+    dog! [groan] I''m a grown adult, and I was openly weeping in the theater! [laugh]
+    The guy next to me offered me his popcorn out of pity! [cough] Excuse me, I''m
+    still recovering. [clear throat] Now, from a technical standpoint, the cinematography
+    was excellent. [sniff] The score was absolutely devastating, in the best possible
+    way. [chuckle] My only complaint is that they emotionally manipulated me so effectively
+    that I may never trust a movie poster again. [sigh] Those lying, deceitful posters
+    with their happy families and golden retrievers. [gasp] Don''t even get me started
+    on the flashback montage! [groan] Who authorized that montage?! [shush] I''m trying
+    to compose myself here. [laugh] So, final rating: ten out of ten, absolutely would
+    not recommend unless you enjoy having your heart removed and stomped on. [sniff]
+    I''m going to go hug my pets now. [cough] This is the emotional movie reviewer
+    signing off. [sigh] Stay hydrated, folks. You''ll need the extra fluids for the
+    tears.
+
+    '
   last_voice_mode: predefined
-  last_predefined_voice: null
-  last_reference_file: null
+  last_predefined_voice: Emily.wav
+  last_reference_file: none
   last_seed: 0
-  last_chunk_size: 120
+  last_chunk_size: 300
   last_split_text_enabled: true
   last_temperature: 0.8
-  last_exaggeration: 0.5
-  last_cfg_weight: 0.5
+  last_exaggeration: 1.25
+  last_cfg_weight: 0.6
   last_language: en
+  last_speed_factor: 1
+  last_output_format: mp3
+  last_stream_tts_enabled: false
+  last_model_repo_id: chatterbox-turbo
   hide_chunk_warning: false
-  hide_generation_warning: false
-  theme: dark
+  hide_generation_warning: true
+  theme: light
+  last_preset_name: "\u26A1 Turbo: The Emotional Movie Reviewer"
 ui:
   title: Chatterbox TTS Server
   show_language_select: true

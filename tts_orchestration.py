@@ -5,13 +5,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import numpy as np
 from starlette.concurrency import run_in_threadpool
 
-import utils
-from audio_pipeline import _synthesize_tts_chunk_sync
 from config import (
     config_manager,
     get_gen_default_cfg_weight,
@@ -111,7 +109,9 @@ def build_text_chunks(
     chunk_size_clamped = max(chunk_size_min, min(chunk_size_max, int(chunk_size)))
     threshold = chunk_size_clamped * 1.5
     if split_enabled and len(text) > threshold:
-        return utils.chunk_text_by_sentences(text, chunk_size_clamped)
+        import utils as _utils
+
+        return _utils.chunk_text_by_sentences(text, chunk_size_clamped)
     return [text]
 
 
@@ -119,9 +119,12 @@ def make_synthesize_chunk_partial(
     audio_prompt_path_str: Optional[str],
     params: ResolvedSynthesisParams,
 ) -> Callable[[str], Tuple[np.ndarray, int]]:
+    from audio_pipeline import _synthesize_tts_chunk_sync
+
+    # Bind prompt path by keyword so the first positional slot stays free for chunk_text.
     return partial(
         _synthesize_tts_chunk_sync,
-        audio_prompt_path_str,
+        audio_prompt_path_str=audio_prompt_path_str,
         temperature=params.temperature,
         exaggeration=params.exaggeration,
         cfg_weight=params.cfg_weight,
@@ -136,7 +139,7 @@ async def synthesize_text_chunks_async(
     audio_prompt_path_str: Optional[str],
     params: ResolvedSynthesisParams,
     *,
-    perf_monitor: Optional[utils.PerformanceMonitor] = None,
+    perf_monitor: Optional[Any] = None,
     log_prefix: str = "TTS",
 ) -> Tuple[List[np.ndarray], int]:
     synth = make_synthesize_chunk_partial(audio_prompt_path_str, params)

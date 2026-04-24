@@ -255,6 +255,22 @@ document.addEventListener('DOMContentLoaded', async function () {
         });
     }
 
+    function coalesceNumberFromUiState(uiKey, genKey, hardFallback) {
+        const v = currentUiState[uiKey];
+        if (typeof v === 'number' && !Number.isNaN(v)) return v;
+        const g = currentConfig.generation_defaults || {};
+        if (typeof g[genKey] === 'number' && !Number.isNaN(g[genKey])) return g[genKey];
+        return hardFallback;
+    }
+
+    function coalesceStringFromUiState(uiKey, genKey, hardFallback) {
+        const v = currentUiState[uiKey];
+        if (typeof v === 'string' && v.length > 0) return v;
+        const g = currentConfig.generation_defaults || {};
+        if (typeof g[genKey] === 'string' && g[genKey].length > 0) return g[genKey];
+        return hardFallback;
+    }
+
     // --- UI State Persistence ---
     async function saveCurrentUiState() {
         const stateToSave = {
@@ -269,6 +285,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             last_exaggeration: exaggerationSlider ? parseFloat(exaggerationSlider.value) : 0.5,
             last_cfg_weight: cfgWeightSlider ? parseFloat(cfgWeightSlider.value) : 0.5,
             last_language: languageSelect ? languageSelect.value : 'en',
+            last_speed_factor: speedFactorSlider ? parseFloat(speedFactorSlider.value) : 1.0,
+            last_output_format: outputFormatSelect ? outputFormatSelect.value : 'mp3',
+            last_stream_tts_enabled: !!(streamTtsToggle && streamTtsToggle.checked),
+            last_model_repo_id: modelSelect ? modelSelect.value : null,
             hide_chunk_warning: hideChunkWarning,
             hide_generation_warning: hideGenerationWarning,
             theme: localStorage.getItem('uiTheme') || 'dark',
@@ -533,7 +553,10 @@ document.addEventListener('DOMContentLoaded', async function () {
                 body: JSON.stringify({
                     model: {
                         repo_id: newSelector
-                    }
+                    },
+                    ui_state: {
+                        last_model_repo_id: newSelector,
+                    },
                 })
             });
 
@@ -677,8 +700,11 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         toggleVoiceOptionsDisplay();
 
-        if (seedInput && currentUiState.last_seed !== undefined) seedInput.value = currentUiState.last_seed;
-        else if (seedInput && currentConfig?.generation_defaults?.seed !== undefined) seedInput.value = currentConfig.generation_defaults.seed;
+        if (seedInput) {
+            const s = currentUiState.last_seed;
+            if (s !== undefined && s !== null && s !== '') seedInput.value = s;
+            else if (currentConfig?.generation_defaults?.seed !== undefined) seedInput.value = currentConfig.generation_defaults.seed;
+        }
 
         if (splitTextToggle) splitTextToggle.checked = currentUiState.last_split_text_enabled !== undefined ? currentUiState.last_split_text_enabled : true;
 
@@ -687,16 +713,33 @@ document.addEventListener('DOMContentLoaded', async function () {
         toggleChunkControlsVisibility();
 
         const genDefaults = currentConfig.generation_defaults || {};
-        if (temperatureSlider) temperatureSlider.value = genDefaults.temperature !== undefined ? genDefaults.temperature : 0.8;
+        const tempV = coalesceNumberFromUiState('last_temperature', 'temperature', 0.8);
+        const exagV = coalesceNumberFromUiState('last_exaggeration', 'exaggeration', 0.5);
+        const cfgV = coalesceNumberFromUiState('last_cfg_weight', 'cfg_weight', 0.5);
+        const speedV = coalesceNumberFromUiState('last_speed_factor', 'speed_factor', 1.0);
+        const langV = coalesceStringFromUiState('last_language', 'language', 'en');
+
+        if (temperatureSlider) temperatureSlider.value = tempV;
         if (temperatureValueDisplay) temperatureValueDisplay.textContent = temperatureSlider.value;
-        if (exaggerationSlider) exaggerationSlider.value = genDefaults.exaggeration !== undefined ? genDefaults.exaggeration : 0.5;
+        if (exaggerationSlider) exaggerationSlider.value = exagV;
         if (exaggerationValueDisplay) exaggerationValueDisplay.textContent = exaggerationSlider.value;
-        if (cfgWeightSlider) cfgWeightSlider.value = genDefaults.cfg_weight !== undefined ? genDefaults.cfg_weight : 0.5;
+        if (cfgWeightSlider) cfgWeightSlider.value = cfgV;
         if (cfgWeightValueDisplay) cfgWeightValueDisplay.textContent = cfgWeightSlider.value;
-        if (speedFactorSlider) speedFactorSlider.value = genDefaults.speed_factor !== undefined ? genDefaults.speed_factor : 1.0;
+        if (speedFactorSlider) speedFactorSlider.value = speedV;
         if (speedFactorValueDisplay) speedFactorValueDisplay.textContent = speedFactorSlider.value;
-        if (languageSelect) languageSelect.value = genDefaults.language || 'en';
-        if (outputFormatSelect) outputFormatSelect.value = currentConfig?.audio_output?.format || 'mp3';
+        if (languageSelect) languageSelect.value = langV;
+
+        const outFormats = ['wav', 'mp3', 'opus'];
+        if (outputFormatSelect) {
+            let outFmt = currentUiState.last_output_format;
+            if (!outFormats.includes(outFmt)) outFmt = currentConfig?.audio_output?.format;
+            if (!outFormats.includes(outFmt)) outFmt = 'mp3';
+            outputFormatSelect.value = outFmt;
+        }
+
+        if (streamTtsToggle) {
+            streamTtsToggle.checked = currentUiState.last_stream_tts_enabled === true;
+        }
 
         if (hideChunkWarningCheckbox) hideChunkWarningCheckbox.checked = hideChunkWarning;
         if (hideGenerationWarningCheckbox) hideGenerationWarningCheckbox.checked = hideGenerationWarning;
@@ -716,14 +759,25 @@ document.addEventListener('DOMContentLoaded', async function () {
             const defaultPreset = savedPreset || appPresets.find(p => p.name === "Standard Narration") || appPresets[0];
 
             if (defaultPreset) {
-                // Apply values AND visuals, no notification, no save
                 applyPreset(defaultPreset, false, false);
+                // debouncedSaveState is skipped during init (uiReady false); persist preset fields once.
+                setTimeout(() => saveCurrentUiState(), 400);
             }
         } else if (currentPresetName) {
             // Case B: Text already exists (restored from last_text). 
             // We don't want to overwrite parameters, but we want to show which preset button was active.
             updatePresetVisuals(currentPresetName);
         }
+
+        if (modelSelect) {
+            const rid = currentUiState.last_model_repo_id;
+            const allowed = ['chatterbox-turbo', 'chatterbox', 'chatterbox-multilingual'];
+            if (typeof rid === 'string' && allowed.includes(rid)) {
+                modelSelect.value = rid;
+            }
+            handleModelSelectChange();
+        }
+        updateSpeedFactorWarning();
     }
 
     function attachStateSavingListeners() {
@@ -734,10 +788,16 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (textArea) textArea.addEventListener('input', () => { if (charCount) charCount.textContent = textArea.value.length; debouncedSaveState(); });
         if (predefinedVoiceSelect) predefinedVoiceSelect.addEventListener('change', debouncedSaveState);
         if (cloneReferenceSelect) cloneReferenceSelect.addEventListener('change', debouncedSaveState);
-        if (seedInput) seedInput.addEventListener('change', debouncedSaveState);
+        if (seedInput) {
+            seedInput.addEventListener('change', debouncedSaveState);
+            seedInput.addEventListener('input', debouncedSaveState);
+        }
         if (splitTextToggle) splitTextToggle.addEventListener('change', () => { toggleChunkControlsVisibility(); debouncedSaveState(); });
         if (chunkSizeSlider) {
-            chunkSizeSlider.addEventListener('input', () => { if (chunkSizeValue) chunkSizeValue.textContent = chunkSizeSlider.value; });
+            chunkSizeSlider.addEventListener('input', () => {
+                if (chunkSizeValue) chunkSizeValue.textContent = chunkSizeSlider.value;
+                debouncedSaveState();
+            });
             chunkSizeSlider.addEventListener('change', debouncedSaveState);
         }
         const genParamSliders = [temperatureSlider, exaggerationSlider, cfgWeightSlider, speedFactorSlider];
@@ -747,17 +807,22 @@ document.addEventListener('DOMContentLoaded', async function () {
                 const valueDisplay = document.getElementById(valueDisplayId);
                 slider.addEventListener('input', () => {
                     if (valueDisplay) valueDisplay.textContent = slider.value;
-                    if (slider.id === 'speed-factor') updateSpeedFactorWarning(); // Update warning on input
+                    if (slider.id === 'speed-factor') updateSpeedFactorWarning();
+                    debouncedSaveState();
                 });
                 slider.addEventListener('change', debouncedSaveState);
             }
         });
         if (languageSelect) languageSelect.addEventListener('change', debouncedSaveState);
         if (outputFormatSelect) outputFormatSelect.addEventListener('change', debouncedSaveState);
+        if (streamTtsToggle) streamTtsToggle.addEventListener('change', debouncedSaveState);
 
         // NEW: Model management listeners
         if (modelSelect) {
-            modelSelect.addEventListener('change', handleModelSelectChange);
+            modelSelect.addEventListener('change', () => {
+                handleModelSelectChange();
+                debouncedSaveState();
+            });
         }
 
         if (applyModelBtn) {
@@ -1416,6 +1481,10 @@ document.addEventListener('DOMContentLoaded', async function () {
                             last_cfg_weight: genParams.cfg_weight,
                             last_language: genParams.language,
                             last_seed: genParams.seed,
+                            last_speed_factor: genParams.speed_factor,
+                            last_output_format: outputFormatSelect ? outputFormatSelect.value : 'mp3',
+                            last_stream_tts_enabled: !!(streamTtsToggle && streamTtsToggle.checked),
+                            last_model_repo_id: modelSelect ? modelSelect.value : null,
                         },
                     })
                 });

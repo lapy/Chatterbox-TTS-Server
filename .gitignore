@@ -32,6 +32,11 @@ env/
 # Ignore sensitive environment file
 .env
 
+# Runtime config (copy from config.example.yaml); may contain secrets and UI state
+config.yaml
+config.yaml.bak
+config.yaml.tmp
+
 # Ignore generated output and user data directories
 outputs/
 reference_audio/

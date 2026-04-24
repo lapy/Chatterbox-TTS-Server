@@ -6,7 +6,7 @@ services:
     ports:
       - "${PORT:-8004}:8004"
     volumes:
-      # Mount local config file for persistence
+      # Copy config.example.yaml to config.yaml on the host first, or let the app create defaults.
       - ./config.yaml:/app/config.yaml
       # Mount local directories for persistent app data
       - ./voices:/app/voices
@@ -38,6 +38,7 @@ services:
     
     restart: unless-stopped
     environment:
+      - CHATTERBOX_SERVER_HOST=0.0.0.0
       # Enable faster Hugging Face downloads
       - HF_HUB_ENABLE_HF_TRANSFER=1
       - HF_TOKEN=YOUR_TOKEN_HERE

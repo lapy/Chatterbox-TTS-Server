@@ -1,0 +1,19 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = [".", "server_routes", "tests"]
+extend-exclude = ["*.ipynb", "start.py", "utils.py", "engine.py", "download_model.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Late imports after logging and `app` setup; avoids importing route modules before configuration.
+"server.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+pythonpath = ["."]

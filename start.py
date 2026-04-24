@@ -108,8 +108,23 @@ INSTALL_NAMES = {
     INSTALL_ROCM: "AMD GPU (ROCm 6.1)",
 }
 
-# Chatterbox fork URL (used for CUDA 12.8 installation)
-CHATTERBOX_REPO = "git+https://github.com/devnen/chatterbox-v2.git@master"
+# Pinned chatterbox-v2 revision (see chatterbox_v2.ref; override only if you know the risk)
+def _chatterbox_git_ref() -> str:
+    ref_file = Path(__file__).resolve().parent / "chatterbox_v2.ref"
+    try:
+        if ref_file.is_file():
+            line = ref_file.read_text(encoding="utf-8").strip().splitlines()
+            if line:
+                return line[0].strip()
+    except OSError:
+        pass
+    return "cc0357396d9c73fc1e6c544ee40bb596020edd09"
+
+
+CHATTERBOX_GIT_REF = _chatterbox_git_ref()
+CHATTERBOX_REPO = (
+    f"git+https://github.com/devnen/chatterbox-v2.git@{CHATTERBOX_GIT_REF}"
+)
 
 # Timeout settings (seconds)
 # First run downloads large model files (~2GB). Subsequent starts are much faster.

@@ -2,15 +2,16 @@
 # Manages application configuration using a YAML file (config.yaml).
 # Handles loading, saving, and providing access to configuration settings.
 
-import os
 import logging
-import yaml
+import os
 import shutil
 from copy import deepcopy
-from threading import Lock
-from typing import Dict, Any, Optional, List, Tuple
-import torch  # For automatic CUDA/CPU device detection
 from pathlib import Path
+from threading import Lock
+from typing import Any, Dict, List, Optional
+
+import torch  # For automatic CUDA/CPU device detection
+import yaml
 
 # Standard logger setup
 logger = logging.getLogger(__name__)
@@ -18,6 +19,18 @@ logger = logging.getLogger(__name__)
 # --- File Path Constants ---
 # Defines the primary configuration file name.
 CONFIG_FILE_PATH = Path("config.yaml")
+_REPO_ROOT = Path(__file__).resolve().parent
+_VERSION_FILE = _REPO_ROOT / "VERSION"
+
+
+def get_app_version() -> str:
+    """Application version from the VERSION file in the repo root."""
+    try:
+        if _VERSION_FILE.is_file():
+            return _VERSION_FILE.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        logger.warning("Could not read VERSION file: %s", e)
+    return "0.0.0"
 
 # --- Default Directory Paths ---
 # These paths are used if not specified in config.yaml and are created if they don't exist
@@ -36,12 +49,20 @@ DEFAULT_OUTPUT_PATH = Path("./outputs")  # For server-saved audio outputs (if an
 # creating a new config.yaml if one does not exist.
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {
-        "host": "0.0.0.0",  # Host address for the server to listen on.
-        "port": 8000,  # Port number for the server.
+        # Bind to loopback by default for safer local use. Docker Compose sets
+        # CHATTERBOX_SERVER_HOST=0.0.0.0 so the service remains reachable.
+        "host": "127.0.0.1",
+        "port": 8004,
         "use_ngrok": False,  # Placeholder for ngrok integration (if used).
-        "use_auth": False,  # Placeholder for basic authentication (if used).
+        "use_auth": False,  # When True, HTTP Basic protects admin/upload/config routes.
         "auth_username": "user",  # Default username if authentication is enabled.
         "auth_password": "password",  # Default password if authentication is enabled.
+        # When True, use the legacy permissive CORS policy (not recommended on untrusted networks).
+        "cors_allow_all": False,
+        # Allowed origins when cors_allow_all is False (e.g. ["http://localhost:3000"]).
+        "cors_origins": [],
+        # Verbose timing logs for /tts (off by default).
+        "enable_performance_monitor": False,
         "log_file_path": str(
             DEFAULT_LOGS_PATH / "tts_server.log"
         ),  # Path to the server log file.
@@ -364,8 +385,28 @@ class YamlConfigManager:
 
             # Resolve device and convert path strings to Path objects for the loaded/created config.
             self.config = self._resolve_paths_and_device(self.config)
+            self._apply_environment_overrides()
             logger.debug(f"Current configuration loaded and resolved: {self.config}")
             return self.config
+
+    def _apply_environment_overrides(self) -> None:
+        """Apply CHATTERBOX_* environment variables over the loaded config."""
+        host_override = os.environ.get("CHATTERBOX_SERVER_HOST", "").strip()
+        if host_override:
+            _set_nested_value(self.config, ["server", "host"], host_override)
+            logger.info("Overriding server.host from CHATTERBOX_SERVER_HOST=%s", host_override)
+
+        port_override = os.environ.get("CHATTERBOX_SERVER_PORT", "").strip()
+        if port_override:
+            try:
+                _set_nested_value(self.config, ["server", "port"], int(port_override))
+                logger.info(
+                    "Overriding server.port from CHATTERBOX_SERVER_PORT=%s", port_override
+                )
+            except ValueError:
+                logger.warning(
+                    "Invalid CHATTERBOX_SERVER_PORT=%r; ignoring.", port_override
+                )
 
     def _save_config_yaml_internal(self, config_dict_to_save: Dict[str, Any]) -> bool:
         """
@@ -542,6 +583,7 @@ class YamlConfigManager:
                 if self._save_config_yaml_internal(resolved_updated_config):
                     # If save was successful, update the active in-memory config.
                     self.config = resolved_updated_config
+                    self._apply_environment_overrides()
                     logger.info(
                         "Configuration updated, saved, and re-resolved successfully."
                     )
@@ -572,6 +614,7 @@ class YamlConfigManager:
                 final_reset_config
             ):  # Save the fully resolved reset config.
                 self.config = final_reset_config  # Update the active in-memory config.
+                self._apply_environment_overrides()
                 logger.info(
                     "Configuration successfully reset to defaults, saved, and resolved."
                 )
@@ -880,14 +923,6 @@ def get_gen_default_language() -> str:
     return config_manager.get_string(
         "generation_defaults.language",
         _get_default_from_structure("generation_defaults.language"),
-    )
-
-
-# Audio Output Settings Accessors
-def get_audio_output_format() -> str:
-    """Returns the default audio output format (e.g., 'wav')."""
-    return config_manager.get_string(
-        "audio_output.format", _get_default_from_structure("audio_output.format")
     )
 
 

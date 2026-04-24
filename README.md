@@ -187,7 +187,7 @@ This server application enhances the underlying `chatterbox-tts` engine with the
     *   ⚡ Built with the high-performance **[FastAPI](https://fastapi.tiangolo.com/)** framework.
     *   ⚙️ **Custom API Endpoint** (`/tts`) as the primary method for programmatic generation, exposing all key parameters.
     *   📄 Interactive API documentation via Swagger UI (`/docs`).
-    *   🩺 Health check endpoint (`/api/ui/initial-data` also serves as a comprehensive status check).
+    *   🩺 Health endpoints: `GET /health` (liveness + version), `GET /ready` (model loaded vs 503), plus `GET /api/ui/initial-data` for full UI bootstrap data.
 *   **Advanced Generation Features:**
     *   🔁 **Hot-Swappable Engines:** Switch between Original Chatterbox, Chatterbox Multilingual, and Chatterbox‑Turbo directly in the Web UI—no restarts required.
     *   🌍 **Multilingual Support:** 23 languages including Arabic, Chinese, French, German, Japanese, Spanish, and more via Chatterbox Multilingual.
@@ -226,6 +226,15 @@ This server application enhances the underlying `chatterbox-tts` engine with the
     *   🔌 NVIDIA GPU acceleration with Container Toolkit integration.
     *   💾 Persistent volumes for models (HF cache), custom voices, outputs, logs, and config.
     *   🚀 One-command setup and deployment (`docker compose up -d`).
+
+## Security and network exposure
+
+This project is aimed at **self-hosted** and **trusted network** use.
+
+- **Bind address:** New installs default to `server.host: 127.0.0.1` in `config.py`. Docker Compose sets `CHATTERBOX_SERVER_HOST=0.0.0.0` so the container stays reachable from the host.
+- **Admin routes:** Set `server.use_auth: true` in `config.yaml` to require HTTP Basic authentication for changing settings, resetting config, model unload/reload, and voice uploads. **`/tts` and `/v1/audio/speech` are not gated by this flag**—put the service behind a reverse proxy or firewall if you need API-wide auth.
+- **CORS:** Permissive `*` CORS is **off** by default. Enable `server.cors_allow_all: true` only when you need the legacy behavior (e.g. some browser setups).
+- **Secrets:** Do not commit real `config.yaml` files. Start from [`config.example.yaml`](config.example.yaml). Use environment variables (e.g. `HF_TOKEN`) for tokens, not committed compose overrides.
 
 ## 🔩 System Prerequisites
 
@@ -485,7 +494,7 @@ This is the most straightforward option and works on any machine without a compa
 # Make sure your (venv) is active
 pip install --upgrade pip
 pip install -r requirements.txt
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 <details>
@@ -505,7 +514,7 @@ For users with NVIDIA GPUs. This provides the best performance for RTX 20/30/40 
 # Make sure your (venv) is active
 pip install --upgrade pip
 pip install -r requirements-nvidia.txt
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 **After installation, verify that PyTorch can see your GPU:**
@@ -548,7 +557,7 @@ pip install --upgrade pip
 pip install -r requirements-nvidia-cu128.txt
 
 # Step 2: Install chatterbox without dependencies (prevents PyTorch downgrade)
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 ⚠️ **Critical:** The `--no-deps` flag is required to prevent PyTorch from being downgraded to a version that doesn't support Blackwell GPUs.
@@ -587,7 +596,7 @@ pip install -r requirements-rocm-init.txt
 pip install -r requirements-rocm.txt
 
 # Step 3: Install chatterbox without dependencies (prevents ROCm torch overwrite)
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 ```
 
 ⚠️ **Critical:** The `--no-deps` flag on chatterbox-tts is required to prevent pip from replacing the ROCm PyTorch wheels with CPU-only versions from PyPI. The `start.py` launcher handles this automatically.
@@ -634,7 +643,7 @@ tts_engine:
 **Step 3: Install remaining dependencies**
 ```bash
 # Install chatterbox-tts without its dependencies to avoid conflicts
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
+pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
 
 # Install core server dependencies
 pip install fastapi 'uvicorn[standard]' librosa safetensors soundfile pydub audiotsm praat-parselmouth python-multipart requests aiofiles PyYAML watchdog unidecode inflect tqdm
@@ -699,7 +708,7 @@ Apple Silicon requires a specific installation sequence due to dependency confli
 
 The server relies exclusively on `config.yaml` for runtime configuration.
 
-*   **`config.yaml`:** Located in the project root. This file stores all server settings, model paths, generation defaults, and UI state. It is created automatically on the first run (using defaults from `config.py`) if it doesn't exist. **This is the main file to edit for persistent configuration changes.**
+*   **`config.yaml`:** Located in the project root. This file stores all server settings, model paths, generation defaults, and UI state. It is created automatically on the first run (using defaults from `config.py`) if it doesn't exist. For Docker Compose, copy [`config.example.yaml`](config.example.yaml) to `config.yaml` on the host before the first run if you want a concrete file to edit. **This is the main file to edit for persistent configuration changes.**
 *   **UI Configuration:** The "Server Configuration" and "Generation Parameters" sections in the Web UI allow direct editing and saving of values *into* `config.yaml`.
 
 **Key Configuration Areas (in `config.yaml` or UI):**
@@ -931,7 +940,7 @@ After you have updated the code using Method 2 or 3, complete these final steps.
 *   **For NVIDIA GPU Systems (CUDA 12.8 / Blackwell):**
     ```bash
     pip install -r requirements-nvidia-cu128.txt
-    pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@master
+    pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
     ```
 *   **For AMD GPU Systems:**
     ```bash

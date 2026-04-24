@@ -1,7 +1,8 @@
 # File: models.py
 # Pydantic models for API request and response validation.
 
-from typing import Optional, Literal
+from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -93,6 +94,18 @@ class CustomTTSRequest(BaseModel):
     language: Optional[str] = Field(
         None, description="Overrides default language if provided."
     )
+
+
+class OpenAISpeechRequest(BaseModel):
+    """OpenAI-compatible POST /v1/audio/speech request body."""
+
+    model: str
+    input_: str = Field(..., alias="input")
+    voice: str
+    response_format: Literal["wav", "opus", "mp3", "pcm"] = "wav"
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    seed: Optional[int] = None
+    stream_format: Optional[Literal["sse", "audio"]] = None
 
 
 class ErrorResponse(BaseModel):

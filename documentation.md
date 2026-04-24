@@ -211,7 +211,7 @@ Ensure your system meets the following requirements before proceeding with insta
 
 ### 3.2 Python Environment
 
-*   **Python Version:** Python 3.10 or later is required.
+*   **Python Version:** **Python 3.10 is required** (3.11+ often lacks wheels for torch/ONNX in this stack). Use the same guidance as `README.md`.
 
 ### 3.3 Hardware
 
@@ -709,6 +709,14 @@ This is the primary and most flexible endpoint for TTS generation, offering full
 
 #### 8.2.4 Helper Endpoints
 These endpoints are primarily used by the Web UI to populate dynamic content and manage settings.
+
+*   **`GET /health`**:
+    *   Returns `{"status": "ok", "version": "..."}` for process liveness (does not require the TTS model).
+*   **`GET /ready`**:
+    *   Returns **200** with `{"status": "ready", "model_loaded": true}` when the model is loaded; **503** when the model is not loaded (suitable for orchestrators that distinguish liveness vs readiness).
+
+**Authentication (optional):** When `server.use_auth` is `true` in `config.yaml`, HTTP Basic authentication is enforced on **`POST /save_settings`**, **`POST /reset_settings`**, **`POST /restart_server`**, **`POST /api/unload`**, **`POST /upload_reference`**, and **`POST /upload_predefined_voice`**. Generation endpoints **`POST /tts`** and **`POST /v1/audio/speech`** are not protected by this flag (use a reverse proxy or network policy if you need API authentication).
+
 *   **`GET /api/ui/initial-data`**:
     *   Returns a JSON object containing the full server configuration (stringified paths), lists of available reference files and predefined voices, and UI presets. Crucial for UI initialization.
 *   **`POST /save_settings`**:
@@ -770,8 +778,8 @@ This section outlines the software architecture of the Chatterbox TTS Server.
 ### 10.1 Key Modules and Their Roles
 
 *   **`server.py` [1]:**
-    *   The main application entry point, built with FastAPI.
-    *   Defines all API endpoints (e.g., `/tts`, `/api/ui/initial-data`, configuration endpoints).
+    *   The main application entry point, built with FastAPI (application factory, static mounts, CORS, lifespan).
+    *   HTTP routes are organized under `server_routes/` (e.g. `/tts`, `/v1/audio/speech`, UI helpers, configuration).
     *   Handles incoming HTTP requests, validates them using Pydantic models (from `models.py` [1]).
     *   Serves the static files for the Web UI (`ui/` directory [1]).
     *   Orchestrates the TTS generation process by calling `engine.py` and `utils.py` functions.

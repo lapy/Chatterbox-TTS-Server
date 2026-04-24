@@ -252,7 +252,7 @@ Refer to `requirements.txt` [1] for the complete list.
 #### 3.4.2 System Libraries (Linux)
 *   **`libsndfile1`**: Required by the `soundfile` Python package for audio file I/O.
     *   Installation (Debian/Ubuntu): `sudo apt install libsndfile1`
-*   **`ffmpeg`**: Recommended for robust audio operations by some underlying libraries (e.g., `librosa` or `torchaudio` for certain formats).
+*   **`ffmpeg`**: **Required** for streaming **opus** and **mp3** (incremental encoding for `/tts` and `/v1/audio/speech`). Without it, those streaming modes return an error. Also recommended for batch MP3/Opus encoding and some `librosa` / `torchaudio` paths.
     *   Installation (Debian/Ubuntu): `sudo apt install ffmpeg`
 
 ---
@@ -679,7 +679,7 @@ This endpoint is designed to be compatible with the basic OpenAI TTS API structu
     *   Generation parameters like temperature, exaggeration, cfg_weight would use server defaults from `config.yaml` as they are not standard OpenAI API fields.
     *   The `speed` and `seed` parameters, if provided, would be used.
 *   **Response:**
-    *   **Success (200 OK):** `StreamingResponse` containing binary audio data (media type `audio/wav` or `audio/opus`).
+    *   **Success (200 OK):** `StreamingResponse` containing binary audio data (media type `audio/wav`, `audio/mpeg`, or `audio/ogg; codecs=opus` for Opus).
     *   **Error:** Standard FastAPI JSON error response (e.g., 400, 404, 500).
 
 #### 8.2.3 POST `/tts` (Custom Parameters)
@@ -704,7 +704,7 @@ This is the primary and most flexible endpoint for TTS generation, offering full
     | `language`                  | string \| null                   | No          | Overrides default language.                                                                                   | `generation_defaults.language`               |
 
 *   **Response:**
-    *   **Success (200 OK):** `StreamingResponse` containing binary audio data (media type `audio/wav` or `audio/opus`) with appropriate `Content-Disposition` headers for download.
+    *   **Success (200 OK):** `StreamingResponse` containing binary audio data (media type `audio/wav`, `audio/mpeg`, or `audio/ogg; codecs=opus` for Opus) with appropriate `Content-Disposition` headers for download.
     *   **Error:** Standard FastAPI JSON error response (e.g., 400 for bad input, 404 for missing voice file, 500 for server error, 503 if model not loaded).
 
 #### 8.2.4 Helper Endpoints

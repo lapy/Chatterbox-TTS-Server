@@ -41,7 +41,11 @@ router = APIRouter()
     summary="Generate speech with custom parameters",
     responses={
         200: {
-            "content": {"audio/wav": {}, "audio/opus": {}},
+            "content": {
+                "audio/wav": {},
+                "audio/mpeg": {},
+                "audio/ogg": {},
+            },
             "description": "Successful audio generation.",
         },
         400: {
@@ -267,7 +271,7 @@ async def custom_tts_endpoint(
             detail=f"Failed to encode audio to {output_format_str} or generated invalid audio.",
         )
 
-    media_type = f"audio/{output_format_str}"
+    media_type = _get_audio_media_type(output_format_str)
     timestamp_str = time.strftime("%Y%m%d_%H%M%S")
     # Include generation parameters in filename for easy comparison across presets
     param_tag = (

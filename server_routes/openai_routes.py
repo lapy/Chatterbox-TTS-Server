@@ -121,7 +121,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
         ):
             raise HTTPException(
                 status_code=503,
-                detail="ffmpeg is required for compressed streaming output (opus/mp3).",
+                detail="ffmpeg is required for streaming opus/mp3 output.",
             )
 
         logger.info(

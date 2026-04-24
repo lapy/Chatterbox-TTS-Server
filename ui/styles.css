@@ -1230,6 +1230,13 @@ a.btn.disabled {
     border-radius: var(--radius-lg);
 }
 
+.audio-player__native {
+    display: block;
+    width: 100%;
+    margin-bottom: var(--space-5);
+    border-radius: var(--radius-lg);
+}
+
 .audio-player__controls {
     display: flex;
     flex-wrap: wrap;

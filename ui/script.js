@@ -1127,6 +1127,98 @@ document.addEventListener('DOMContentLoaded', async function () {
         setTimeout(() => audioPlayerContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 150);
     }
 
+    /**
+     * Streamed MP3/Opus uses the native audio element so playback matches the streamed container
+     * (Ogg Opus vs WaveSurfer/Web Audio blob decoding).
+     */
+    function initializeStreamingAudioPlayer(audioUrl, resultDetails = {}) {
+        if (wavesurfer) {
+            wavesurfer.unAll();
+            wavesurfer.destroy();
+            wavesurfer = null;
+        }
+        if (currentAudioBlobUrl) {
+            URL.revokeObjectURL(currentAudioBlobUrl);
+            currentAudioBlobUrl = null;
+        }
+        currentAudioBlobUrl = audioUrl;
+
+        audioPlayerContainer.innerHTML = `
+            <div class="card audio-player">
+                <div class="card__body">
+                    <h2 class="card__title">Generated Audio</h2>
+                    <audio id="html-stream-audio" class="audio-player__native" controls preload="metadata"></audio>
+                    <div class="audio-player__controls">
+                        <div class="audio-player__buttons">
+                            <a id="download-link" href="#" download="tts_output.bin" class="btn secondary">
+                                <svg class="btn__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z"/>
+                                    <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z"/>
+                                </svg>
+                                <span>Download</span>
+                            </a>
+                        </div>
+                        <div class="audio-player__info">
+                            Mode: <span id="player-voice-mode" class="text-primary">--</span>
+                            <span id="player-voice-file-details"></span>
+                            <span class="separator">•</span> Gen Time: <span id="player-gen-time" class="tabular-nums">--s</span>
+                            <span class="separator">•</span> Duration: <span id="audio-duration" class="tabular-nums">--:--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        const audioEl = audioPlayerContainer.querySelector('#html-stream-audio');
+        const downloadLink = audioPlayerContainer.querySelector('#download-link');
+        const playerModeSpan = audioPlayerContainer.querySelector('#player-voice-mode');
+        const playerFileSpan = audioPlayerContainer.querySelector('#player-voice-file-details');
+        const playerGenTimeSpan = audioPlayerContainer.querySelector('#player-gen-time');
+        const audioDurationSpan = audioPlayerContainer.querySelector('#audio-duration');
+
+        if (audioEl) {
+            audioEl.src = audioUrl;
+        }
+
+        const audioFilename = resultDetails.filename
+            || (typeof audioUrl === 'string' ? audioUrl.split('/').pop() : 'tts_stream.mp3');
+        if (downloadLink) {
+            downloadLink.href = audioUrl;
+            downloadLink.download = audioFilename;
+            const downloadTextSpan = downloadLink.querySelector('span');
+            if (downloadTextSpan) {
+                const ext = (audioFilename.split('.').pop() || 'audio').toUpperCase();
+                downloadTextSpan.textContent = `Download ${ext}`;
+            }
+        }
+        if (playerModeSpan) playerModeSpan.textContent = resultDetails.submittedVoiceMode || currentVoiceMode || '--';
+        if (playerFileSpan) {
+            let fileDetail = '';
+            if ((resultDetails.submittedVoiceMode || currentVoiceMode) === 'clone' && resultDetails.submittedCloneFile) {
+                fileDetail = `(<span class="font-medium text-slate-700 dark:text-slate-300">${resultDetails.submittedCloneFile}</span>)`;
+            } else if ((resultDetails.submittedVoiceMode || currentVoiceMode) === 'predefined' && resultDetails.submittedPredefinedVoice) {
+                fileDetail = `(<span class="font-medium text-slate-700 dark:text-slate-300">${resultDetails.submittedPredefinedVoice}</span>)`;
+            }
+            playerFileSpan.innerHTML = fileDetail;
+        }
+        if (playerGenTimeSpan) playerGenTimeSpan.textContent = resultDetails.genTime ? `${resultDetails.genTime}s` : '--s';
+
+        if (audioEl && audioDurationSpan) {
+            audioEl.addEventListener('loadedmetadata', () => {
+                if (audioEl.duration && Number.isFinite(audioEl.duration)) {
+                    audioDurationSpan.textContent = formatTime(audioEl.duration);
+                }
+            });
+            audioEl.addEventListener('error', () => {
+                showNotification(
+                    'Could not play this stream in the browser. Try the download button, or generate without streaming.',
+                    'error'
+                );
+            });
+        }
+
+        setTimeout(() => audioPlayerContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 150);
+    }
+
     // --- TTS Generation Logic ---
     function getTTSFormData() {
         const jsonData = {
@@ -1176,7 +1268,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         const chunks = [];
         let firstByteMs = null;
         let totalBytes = 0;
-        const mimeFallback = jsonData.output_format === 'opus' ? 'audio/opus' : 'audio/mpeg';
+        const mimeFallback = jsonData.output_format === 'opus'
+            ? 'audio/ogg; codecs=opus'
+            : 'audio/mpeg';
 
         while (true) {
             const { done, value } = await reader.read();
@@ -1208,7 +1302,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             submittedPredefinedVoice: jsonData.predefined_voice_id,
             submittedCloneFile: jsonData.reference_audio_filename,
         };
-        initializeWaveSurfer(resultDetails.outputUrl, resultDetails);
+        initializeStreamingAudioPlayer(resultDetails.outputUrl, resultDetails);
         const ttfbNote = firstByteMs != null ? ` Time to first byte: ${firstByteMs} ms.` : '';
         showNotification(`Stream finished (${(totalBytes / 1024).toFixed(1)} KB).${ttfbNote}`, 'success', 6000);
     }

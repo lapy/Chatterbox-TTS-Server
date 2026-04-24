@@ -252,7 +252,7 @@ This project is aimed at **self-hosted** and **trusted network** use.
     *   **Apple Silicon:** M1, M2, M3, M4, or newer Apple Silicon chips with macOS 12.3+ for MPS acceleration.
 *   **(Linux Only):**
     *   `libsndfile1`: Audio library needed by `soundfile`. Install via package manager (e.g., `sudo apt install libsndfile1`).
-    *   `ffmpeg`: For robust audio operations (optional but recommended). Install via package manager (e.g., `sudo apt install ffmpeg`).
+    *   `ffmpeg`: **Required** for incremental/streaming **opus** and **mp3** (`/tts` with `stream: true`, or `/v1/audio/speech` with `stream_format` and `response_format` opus/mp3). Also recommended for batch MP3/Opus via pydub and some librosa/torchaudio paths. Install via package manager (e.g., `sudo apt install ffmpeg`).
 
 ### Hardware Compatibility Matrix
 
@@ -1014,7 +1014,7 @@ The primary endpoint for TTS generation is `/tts`, which offers detailed control
         *   `split_text` (boolean, default True): Whether to chunk long text.
         *   `chunk_size` (integer, default 120): Target characters per chunk.
         *   `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`: Generation parameters overriding defaults.
-    *   **Response:** Streaming audio (`audio/wav` or `audio/opus`).
+    *   **Response:** Streaming audio (`audio/wav`, `audio/mpeg`, or `audio/ogg; codecs=opus` for Opus-in-Ogg).
 *   **`/v1/audio/speech` (POST):** OpenAI-compatible.
     *   `input`: Text.
     *   `voice`: 'S1', 'S2', 'dialogue', 'predefined_voice_filename.wav', or 'reference_filename.wav'.

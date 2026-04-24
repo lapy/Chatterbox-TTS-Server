@@ -1,5 +1,6 @@
 """Health and readiness endpoints."""
 import logging
+import shutil
 
 from fastapi import APIRouter, HTTPException
 
@@ -12,7 +13,11 @@ router = APIRouter(tags=["Health"])
 
 @router.get("/health")
 def health_check():
-    return {"status": "ok", "version": get_app_version()}
+    return {
+        "status": "ok",
+        "version": get_app_version(),
+        "ffmpeg_available": shutil.which("ffmpeg") is not None,
+    }
 
 
 @router.get("/ready")

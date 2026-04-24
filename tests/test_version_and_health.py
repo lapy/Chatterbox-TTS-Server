@@ -11,6 +11,8 @@ def test_health(client):
     body = r.json()
     assert body["status"] == "ok"
     assert body["version"] == "2.0.2"
+    assert "ffmpeg_available" in body
+    assert isinstance(body["ffmpeg_available"], bool)
 
 
 def test_ready_when_model_patched(client):

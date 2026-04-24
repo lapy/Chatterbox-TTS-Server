@@ -379,7 +379,8 @@ def _float32_to_pcm_s16le_bytes(
 def _get_audio_media_type(output_format: str) -> str:
     media_type_map = {
         "mp3": "audio/mpeg",
-        "opus": "audio/opus",
+        # Streamed Opus is muxed as Ogg (ffmpeg -f ogg); browsers decode with audio/ogg.
+        "opus": "audio/ogg; codecs=opus",
         "wav": "audio/wav",
         "pcm": "application/octet-stream",
     }
@@ -430,11 +431,14 @@ def _get_ffmpeg_stream_command(
         ]
 
     if output_format == "mp3":
+        # -reservoir 0 reduces encoder delay so shorter PCM still produces frames.
         return base_cmd + [
             "-c:a",
             "libmp3lame",
             "-b:a",
             "128k",
+            "-reservoir",
+            "0",
             "-write_xing",
             "0",
             "-id3v2_version",
@@ -481,6 +485,9 @@ async def _stream_encoded_audio_from_pcm(
     inter_chunk_gap_bytes = np.zeros(
         int(target_sample_rate * 0.03), dtype=np.int16
     ).tobytes()
+    # libmp3lame may write zero bytes on stdout if total PCM is shorter than ~2.5s
+    # at 24 kHz (even after stdin EOF). Pad with trailing silence so short lines work.
+    min_mp3_pcm_samples = int(target_sample_rate * 2.6)
     writer_error: Optional[BaseException] = None
 
     async def _collect_stderr() -> None:
@@ -492,6 +499,7 @@ async def _stream_encoded_audio_from_pcm(
 
     async def _writer() -> None:
         nonlocal writer_error
+        pcm_samples_written = 0
         try:
             for i, chunk_text in enumerate(text_chunks):
                 wave, sr = await run_in_threadpool(
@@ -501,9 +509,17 @@ async def _stream_encoded_audio_from_pcm(
                 pcm = _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate)
                 proc.stdin.write(pcm)
                 await proc.stdin.drain()
+                pcm_samples_written += len(pcm) // 2
 
                 if i < len(text_chunks) - 1:
                     proc.stdin.write(inter_chunk_gap_bytes)
+                    await proc.stdin.drain()
+                    pcm_samples_written += len(inter_chunk_gap_bytes) // 2
+
+            if output_format == "mp3":
+                pad_samples = min_mp3_pcm_samples - pcm_samples_written
+                if pad_samples > 0:
+                    proc.stdin.write(b"\x00\x00" * pad_samples)
                     await proc.stdin.drain()
         except asyncio.CancelledError:
             raise

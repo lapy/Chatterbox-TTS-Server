@@ -8,7 +8,7 @@ import json
 import logging
 import shutil
 from contextlib import suppress
-from typing import AsyncIterator, List, Optional, Tuple
+from typing import AsyncIterator, Callable, List, Optional, Tuple
 
 import librosa
 import numpy as np
@@ -16,13 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 import engine
 import utils
-from config import (
-    config_manager,
-    get_gen_default_cfg_weight,
-    get_gen_default_exaggeration,
-    get_gen_default_language,
-    get_gen_default_temperature,
-)
+from config import config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -339,28 +333,31 @@ def _finalize_stitched_tts_audio(
 
 
 # --- End Audio Stitching Helper Functions ---
-def _openai_synthesize_text_chunk_sync(
+def _synthesize_tts_chunk_sync(
     chunk_text: str,
-    audio_prompt_path_str: str,
-    seed_to_use: int,
-    speed_factor_to_use: float,
+    audio_prompt_path_str: Optional[str],
+    *,
+    temperature: float,
+    exaggeration: float,
+    cfg_weight: float,
+    seed: int,
+    language: str,
+    speed_factor: float,
 ) -> Tuple[np.ndarray, int]:
-    """Return mono float32 waveform in [-1, 1] and engine sample rate."""
+    """Return mono float32 waveform in [-1, 1] and engine sample rate (UI / /tts streaming)."""
     audio_tensor, sr = engine.synthesize(
         text=chunk_text,
         audio_prompt_path=audio_prompt_path_str,
-        temperature=get_gen_default_temperature(),
-        exaggeration=get_gen_default_exaggeration(),
-        cfg_weight=get_gen_default_cfg_weight(),
-        seed=seed_to_use,
-        language=get_gen_default_language(),
+        temperature=temperature,
+        exaggeration=exaggeration,
+        cfg_weight=cfg_weight,
+        seed=seed,
+        language=language,
     )
     if audio_tensor is None or sr is None:
         raise RuntimeError("TTS engine failed to synthesize audio for a text chunk.")
-    if speed_factor_to_use != 1.0:
-        audio_tensor, _ = utils.apply_speed_factor(
-            audio_tensor, sr, speed_factor_to_use
-        )
+    if speed_factor != 1.0:
+        audio_tensor, _ = utils.apply_speed_factor(audio_tensor, sr, speed_factor)
     chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
     return _ensure_mono_waveform_1d(chunk_np), sr
 
@@ -415,11 +412,20 @@ def _get_ffmpeg_stream_command(
     ]
 
     if output_format == "opus":
+        # Ogg muxer default page_duration is ~1s (ffmpeg libavformat), which delays the
+        # first bytes on stdout until roughly that much encoded timeline is muxed.
+        # Smaller pages + low-delay libopus settings improve time-to-first-byte for streaming.
         return base_cmd + [
             "-c:a",
             "libopus",
+            "-application",
+            "lowdelay",
+            "-frame_duration",
+            "20",
             "-f",
             "ogg",
+            "-page_duration",
+            "50000",
             "pipe:1",
         ]
 
@@ -444,13 +450,11 @@ def _get_ffmpeg_stream_command(
 async def _stream_encoded_audio_from_pcm(
     *,
     text_chunks: List[str],
-    audio_prompt_path_str: str,
-    seed_to_use: int,
-    speed_factor_to_use: float,
     target_sample_rate: int,
     output_format: str,
     sse: bool,
     log_prefix: str,
+    synthesize_chunk_sync: Callable[[str], Tuple[np.ndarray, int]],
 ) -> AsyncIterator[bytes]:
     ffmpeg_path = shutil.which("ffmpeg")
     if not ffmpeg_path:
@@ -491,11 +495,8 @@ async def _stream_encoded_audio_from_pcm(
         try:
             for i, chunk_text in enumerate(text_chunks):
                 wave, sr = await run_in_threadpool(
-                    _openai_synthesize_text_chunk_sync,
+                    synthesize_chunk_sync,
                     chunk_text,
-                    audio_prompt_path_str,
-                    seed_to_use,
-                    speed_factor_to_use,
                 )
                 pcm = _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate)
                 proc.stdin.write(pcm)

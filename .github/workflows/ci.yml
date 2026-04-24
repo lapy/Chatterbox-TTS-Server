@@ -1,8 +1,10 @@
 name: CI
 
+# Do not run on pushes to main (e.g. after merge). PRs into main/docker-release still run CI.
 on:
   push:
-    branches: [main, docker-release]
+    branches-ignore:
+      - main
   pull_request:
     branches: [main, docker-release]
 

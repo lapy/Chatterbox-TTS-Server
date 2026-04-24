@@ -324,6 +324,16 @@
                                             <p class="form-hint">MP3 is recommended for smaller file sizes (e.g.,
                                                 audiobooks).</p>
                                         </div>
+                                        <div class="form-group">
+                                            <label for="stream-tts-toggle" class="checkbox-label">
+                                                <input type="checkbox" id="stream-tts-toggle" name="stream_tts"
+                                                    class="form-checkbox">
+                                                <span>Stream audio (test)</span>
+                                            </label>
+                                            <p class="form-hint">Uses incremental opus/mp3 encoding (requires ffmpeg on
+                                                the server). Shows time-to-first-byte while downloading; playback starts
+                                                after the stream completes.</p>
+                                        </div>
                                         <div class="form-grid__full mt-4 flex-row items-center gap-4">
                                             <button id="save-gen-defaults-btn" type="button" class="btn ghost">Save
                                                 Generation Parameters</button>

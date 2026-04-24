@@ -94,10 +94,22 @@ class CustomTTSRequest(BaseModel):
     language: Optional[str] = Field(
         None, description="Overrides default language if provided."
     )
+    stream: bool = Field(
+        False,
+        description="If true, stream opus or mp3 incrementally (requires ffmpeg). For testing / low latency.",
+    )
 
 
 class OpenAISpeechRequest(BaseModel):
-    """OpenAI-compatible POST /v1/audio/speech request body."""
+    """
+    OpenAI-compatible POST /v1/audio/speech request body.
+
+    Fields not present in the OpenAI API but required by the engine (temperature,
+    exaggeration, cfg_weight, language) are read from ``config.ui_state.last_*``,
+    falling back to ``generation_defaults``. Chunking follows ``ui_state.last_chunk_size``
+    and ``ui_state.last_split_text_enabled``. The web UI updates ``last_*`` when saving
+    UI state or generation defaults.
+    """
 
     model: str
     input_: str = Field(..., alias="input")

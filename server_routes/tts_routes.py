@@ -1,32 +1,36 @@
 """Custom POST /tts route."""
 import io
 import logging
+import shutil
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-import numpy as np
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 
 import engine
 import utils
-from audio_pipeline import _finalize_stitched_tts_audio
+from audio_pipeline import (
+    _finalize_stitched_tts_audio,
+    _get_audio_media_type,
+    _stream_encoded_audio_from_pcm,
+)
 from config import (
     config_manager,
     get_audio_output_format,
     get_audio_sample_rate,
-    get_gen_default_cfg_weight,
-    get_gen_default_exaggeration,
-    get_gen_default_language,
-    get_gen_default_seed,
-    get_gen_default_speed_factor,
-    get_gen_default_temperature,
     get_output_path,
     get_predefined_voices_path,
     get_reference_audio_path,
 )
 from models import CustomTTSRequest, ErrorResponse
+from tts_orchestration import (
+    build_text_chunks,
+    make_synthesize_chunk_partial,
+    resolve_synthesis_params_custom,
+    synthesize_text_chunks_async,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -133,110 +137,94 @@ async def custom_tts_endpoint(
 
     perf_monitor.record("Parameters and voice path resolved")
 
-    all_audio_segments_np: List[np.ndarray] = []
-    final_output_sample_rate = (
-        get_audio_sample_rate()
-    )  # Target SR for the final output file
-    engine_output_sample_rate: Optional[int] = (
-        None  # SR from the TTS engine (e.g., 24000 Hz)
+    final_output_sample_rate = get_audio_sample_rate()
+    params = resolve_synthesis_params_custom(request)
+    chunk_size_to_use = request.chunk_size if request.chunk_size is not None else 120
+    text_chunks = build_text_chunks(
+        request.text,
+        split_enabled=bool(request.split_text),
+        chunk_size=chunk_size_to_use,
+        chunk_size_min=50,
+        chunk_size_max=500,
     )
-
-    if request.split_text and len(request.text) > (
-        request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5
-    ):
-        chunk_size_to_use = (
-            request.chunk_size if request.chunk_size is not None else 120
-        )
-        logger.info(f"Splitting text into chunks of size ~{chunk_size_to_use}.")
-        text_chunks = utils.chunk_text_by_sentences(request.text, chunk_size_to_use)
-        perf_monitor.record(f"Text split into {len(text_chunks)} chunks")
-    else:
-        text_chunks = [request.text]
-        logger.info(
-            "Processing text as a single chunk (splitting not enabled or text too short)."
-        )
+    perf_monitor.record(f"Text split into {len(text_chunks)} chunks")
 
     if not text_chunks:
         raise HTTPException(
             status_code=400, detail="Text processing resulted in no usable chunks."
         )
 
-    for i, chunk in enumerate(text_chunks):
-        logger.info(f"Synthesizing chunk {i+1}/{len(text_chunks)}...")
-        try:
-            chunk_audio_tensor, chunk_sr_from_engine = engine.synthesize(
-                text=chunk,
-                audio_prompt_path=(
-                    str(audio_prompt_path_for_engine)
-                    if audio_prompt_path_for_engine
-                    else None
-                ),
-                temperature=(
-                    request.temperature
-                    if request.temperature is not None
-                    else get_gen_default_temperature()
-                ),
-                exaggeration=(
-                    request.exaggeration
-                    if request.exaggeration is not None
-                    else get_gen_default_exaggeration()
-                ),
-                cfg_weight=(
-                    request.cfg_weight
-                    if request.cfg_weight is not None
-                    else get_gen_default_cfg_weight()
-                ),
-                seed=(
-                    request.seed if request.seed is not None else get_gen_default_seed()
-                ),
-                language=(
-                    request.language
-                    if request.language is not None
-                    else get_gen_default_language()
-                ),
+    output_format_str = (
+        request.output_format if request.output_format else get_audio_output_format()
+    )
+
+    if request.stream:
+        if output_format_str not in ("opus", "mp3"):
+            raise HTTPException(
+                status_code=400,
+                detail="When 'stream' is true, output_format must be 'opus' or 'mp3'.",
             )
-            perf_monitor.record(f"Engine synthesized chunk {i+1}")
-
-            if chunk_audio_tensor is None or chunk_sr_from_engine is None:
-                error_detail = f"TTS engine failed to synthesize audio for chunk {i+1}."
-                logger.error(error_detail)
-                raise HTTPException(status_code=500, detail=error_detail)
-
-            if engine_output_sample_rate is None:
-                engine_output_sample_rate = chunk_sr_from_engine
-            elif engine_output_sample_rate != chunk_sr_from_engine:
-                logger.warning(
-                    f"Inconsistent sample rate from engine: chunk {i+1} ({chunk_sr_from_engine}Hz) "
-                    f"differs from previous ({engine_output_sample_rate}Hz). Using first chunk's SR."
-                )
-
-            current_processed_audio_tensor = chunk_audio_tensor
-
-            speed_factor_to_use = (
-                request.speed_factor
-                if request.speed_factor is not None
-                else get_gen_default_speed_factor()
+        if shutil.which("ffmpeg") is None:
+            raise HTTPException(
+                status_code=503,
+                detail="ffmpeg is required for streaming opus/mp3 output.",
             )
-            if speed_factor_to_use != 1.0:
-                current_processed_audio_tensor, _ = utils.apply_speed_factor(
-                    current_processed_audio_tensor,
-                    chunk_sr_from_engine,
-                    speed_factor_to_use,
-                )
-                perf_monitor.record(f"Speed factor applied to chunk {i+1}")
+        path_for_synth = (
+            str(audio_prompt_path_for_engine)
+            if audio_prompt_path_for_engine
+            else None
+        )
+        synthesize_fn = make_synthesize_chunk_partial(path_for_synth, params)
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        param_tag = (
+            f"T{params.temperature:.1f}_E{params.exaggeration:.1f}_W{params.cfg_weight:.1f}".replace(
+                ".", ""
+            )
+        )
+        suggested_filename_base = f"tts_output_{param_tag}_{timestamp_str}"
+        download_filename = utils.sanitize_filename(
+            f"{suggested_filename_base}.{output_format_str}"
+        )
+        headers = {
+            "Content-Disposition": f'attachment; filename="{download_filename}"',
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+        logger.info(
+            f"Streaming /tts ({output_format_str}), {len(text_chunks)} text chunk(s)."
+        )
+        return StreamingResponse(
+            _stream_encoded_audio_from_pcm(
+                text_chunks=text_chunks,
+                target_sample_rate=final_output_sample_rate,
+                output_format=output_format_str,
+                sse=False,
+                log_prefix="/tts stream",
+                synthesize_chunk_sync=synthesize_fn,
+            ),
+            media_type=_get_audio_media_type(output_format_str),
+            headers=headers,
+        )
 
-            # ### MODIFICATION ###
-            # All other processing is REMOVED from the loop.
-            # We will process the final concatenated audio clip.
-            processed_audio_np = current_processed_audio_tensor.cpu().numpy().squeeze()
-            all_audio_segments_np.append(processed_audio_np)
-
-        except HTTPException as http_exc:
-            raise http_exc
-        except Exception as e_chunk:
-            error_detail = f"Error processing audio chunk {i+1}: {str(e_chunk)}"
-            logger.error(error_detail, exc_info=True)
-            raise HTTPException(status_code=500, detail=error_detail)
+    path_for_synth = (
+        str(audio_prompt_path_for_engine) if audio_prompt_path_for_engine else None
+    )
+    try:
+        all_audio_segments_np, engine_output_sample_rate = (
+            await synthesize_text_chunks_async(
+                text_chunks,
+                path_for_synth,
+                params,
+                perf_monitor=perf_monitor,
+                log_prefix="/tts",
+            )
+        )
+    except RuntimeError as e:
+        logger.error(str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error during TTS synthesis: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
     if not all_audio_segments_np:
         logger.error("No audio segments were successfully generated.")
@@ -244,11 +232,6 @@ async def custom_tts_endpoint(
             status_code=500, detail="Audio generation resulted in no output."
         )
 
-    if engine_output_sample_rate is None:
-        logger.error("Engine output sample rate could not be determined.")
-        raise HTTPException(
-            status_code=500, detail="Failed to determine engine sample rate."
-        )
     try:
         final_audio_np = _finalize_stitched_tts_audio(
             all_audio_segments_np,
@@ -264,10 +247,6 @@ async def custom_tts_endpoint(
         raise HTTPException(
             status_code=500, detail=f"Audio stitching error: {e_concat}"
         )
-
-    output_format_str = (
-        request.output_format if request.output_format else get_audio_output_format()
-    )
 
     encoded_audio_bytes = utils.encode_audio(
         audio_array=final_audio_np,
@@ -291,10 +270,11 @@ async def custom_tts_endpoint(
     media_type = f"audio/{output_format_str}"
     timestamp_str = time.strftime("%Y%m%d_%H%M%S")
     # Include generation parameters in filename for easy comparison across presets
-    temp_val = request.temperature if request.temperature is not None else get_gen_default_temperature()
-    exag_val = request.exaggeration if request.exaggeration is not None else get_gen_default_exaggeration()
-    cfg_val = request.cfg_weight if request.cfg_weight is not None else get_gen_default_cfg_weight()
-    param_tag = f"T{temp_val:.1f}_E{exag_val:.1f}_W{cfg_val:.1f}".replace(".", "")
+    param_tag = (
+        f"T{params.temperature:.1f}_E{params.exaggeration:.1f}_W{params.cfg_weight:.1f}".replace(
+            ".", ""
+        )
+    )
     suggested_filename_base = f"tts_output_{param_tag}_{timestamp_str}"
     download_filename = utils.sanitize_filename(
         f"{suggested_filename_base}.{output_format_str}"

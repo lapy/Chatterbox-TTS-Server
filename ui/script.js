@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     let uiReady = false;
     let listenersAttached = false;
     let isGenerating = false;
+    let activeTtsAbortController = null;
     let wavesurfer = null;
     let currentAudioBlobUrl = null;
     let saveStateTimeout = null;
@@ -105,6 +106,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     const languageSelectContainer = document.getElementById('language-select-container');
     const languageSelect = document.getElementById('language');
     const outputFormatSelect = document.getElementById('output-format');
+    const streamTtsToggle = document.getElementById('stream-tts-toggle');
     const saveGenDefaultsBtn = document.getElementById('save-gen-defaults-btn');
     const genDefaultsStatus = document.getElementById('gen-defaults-status');
     const serverConfigForm = document.getElementById('server-config-form');
@@ -263,6 +265,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             last_seed: seedInput ? parseInt(seedInput.value, 10) || 0 : 0,
             last_chunk_size: chunkSizeSlider ? parseInt(chunkSizeSlider.value, 10) : 120,
             last_split_text_enabled: splitTextToggle ? splitTextToggle.checked : true,
+            last_temperature: temperatureSlider ? parseFloat(temperatureSlider.value) : 0.8,
+            last_exaggeration: exaggerationSlider ? parseFloat(exaggerationSlider.value) : 0.5,
+            last_cfg_weight: cfgWeightSlider ? parseFloat(cfgWeightSlider.value) : 0.5,
+            last_language: languageSelect ? languageSelect.value : 'en',
             hide_chunk_warning: hideChunkWarning,
             hide_generation_warning: hideGenerationWarning,
             theme: localStorage.getItem('uiTheme') || 'dark',
@@ -1069,7 +1075,8 @@ document.addEventListener('DOMContentLoaded', async function () {
             voice_mode: currentVoiceMode,
             split_text: splitTextToggle.checked,
             chunk_size: parseInt(chunkSizeSlider.value, 10),
-            output_format: outputFormatSelect.value || 'mp3'
+            output_format: outputFormatSelect.value || 'mp3',
+            stream: !!(streamTtsToggle && streamTtsToggle.checked),
         };
         if (currentVoiceMode === 'predefined' && predefinedVoiceSelect.value !== 'none') {
             jsonData.predefined_voice_id = predefinedVoiceSelect.value;
@@ -1079,36 +1086,113 @@ document.addEventListener('DOMContentLoaded', async function () {
         return jsonData;
     }
 
+    async function submitStreamingTTSRequest(jsonData, startTime) {
+        activeTtsAbortController = new AbortController();
+        if (loadingMessage) loadingMessage.textContent = 'Streaming audio…';
+        if (loadingStatusText) loadingStatusText.textContent = 'Waiting for first byte…';
+
+        const response = await fetch(`${API_BASE_URL}/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(jsonData),
+            signal: activeTtsAbortController.signal,
+        });
+
+        if (!response.ok) {
+            const errorResult = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
+            throw new Error(formatErrorDetail(errorResult.detail) || 'TTS streaming failed.');
+        }
+
+        const reader = response.body && response.body.getReader();
+        if (!reader) {
+            throw new Error('Streaming response has no body (browser limitation?).');
+        }
+
+        const chunks = [];
+        let firstByteMs = null;
+        let totalBytes = 0;
+        const mimeFallback = jsonData.output_format === 'opus' ? 'audio/opus' : 'audio/mpeg';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (firstByteMs === null) {
+                firstByteMs = Math.round(performance.now() - startTime);
+            }
+            chunks.push(value);
+            totalBytes += value.byteLength;
+            if (loadingStatusText) {
+                loadingStatusText.textContent =
+                    `Streaming… ${(totalBytes / 1024).toFixed(1)} KB — first byte ${firstByteMs} ms`;
+            }
+        }
+
+        const endTime = performance.now();
+        const genTime = ((endTime - startTime) / 1000).toFixed(2);
+        const contentType = response.headers.get('content-type') || mimeFallback;
+        const audioBlob = new Blob(chunks, { type: contentType });
+        const cd = response.headers.get('Content-Disposition');
+        const filenameFromServer = cd?.split('filename=')[1]?.replace(/"/g, '').trim()
+            || `tts_stream.${jsonData.output_format}`;
+
+        const resultDetails = {
+            outputUrl: URL.createObjectURL(audioBlob),
+            filename: filenameFromServer,
+            genTime: genTime,
+            submittedVoiceMode: jsonData.voice_mode,
+            submittedPredefinedVoice: jsonData.predefined_voice_id,
+            submittedCloneFile: jsonData.reference_audio_filename,
+        };
+        initializeWaveSurfer(resultDetails.outputUrl, resultDetails);
+        const ttfbNote = firstByteMs != null ? ` Time to first byte: ${firstByteMs} ms.` : '';
+        showNotification(`Stream finished (${(totalBytes / 1024).toFixed(1)} KB).${ttfbNote}`, 'success', 6000);
+    }
+
     async function submitTTSRequest() {
         isGenerating = true;
         showLoadingOverlay();
         const startTime = performance.now();
         const jsonData = getTTSFormData();
         try {
-            const response = await fetch(`${API_BASE_URL}/tts`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(jsonData)
-            });
-            if (!response.ok) {
-                const errorResult = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
-                throw new Error(formatErrorDetail(errorResult.detail) || 'TTS generation failed.');
+            if (jsonData.stream) {
+                if (jsonData.output_format !== 'opus' && jsonData.output_format !== 'mp3') {
+                    showNotification('Streaming requires Opus or MP3 output format.', 'error');
+                    return;
+                }
+                await submitStreamingTTSRequest(jsonData, startTime);
+            } else {
+                activeTtsAbortController = new AbortController();
+                const response = await fetch(`${API_BASE_URL}/tts`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(jsonData),
+                    signal: activeTtsAbortController.signal,
+                });
+                if (!response.ok) {
+                    const errorResult = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
+                    throw new Error(formatErrorDetail(errorResult.detail) || 'TTS generation failed.');
+                }
+                const audioBlob = await response.blob();
+                const endTime = performance.now();
+                const genTime = ((endTime - startTime) / 1000).toFixed(2);
+                const filenameFromServer = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'generated_audio.wav';
+                const resultDetails = {
+                    outputUrl: URL.createObjectURL(audioBlob), filename: filenameFromServer, genTime: genTime,
+                    submittedVoiceMode: jsonData.voice_mode, submittedPredefinedVoice: jsonData.predefined_voice_id,
+                    submittedCloneFile: jsonData.reference_audio_filename
+                };
+                initializeWaveSurfer(resultDetails.outputUrl, resultDetails);
+                showNotification('Audio generated successfully!', 'success');
             }
-            const audioBlob = await response.blob();
-            const endTime = performance.now();
-            const genTime = ((endTime - startTime) / 1000).toFixed(2);
-            const filenameFromServer = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'generated_audio.wav';
-            const resultDetails = {
-                outputUrl: URL.createObjectURL(audioBlob), filename: filenameFromServer, genTime: genTime,
-                submittedVoiceMode: jsonData.voice_mode, submittedPredefinedVoice: jsonData.predefined_voice_id,
-                submittedCloneFile: jsonData.reference_audio_filename
-            };
-            initializeWaveSurfer(resultDetails.outputUrl, resultDetails);
-            showNotification('Audio generated successfully!', 'success');
         } catch (error) {
-            console.error('TTS Generation Error:', error);
-            showNotification(error.message || 'An unknown error occurred during TTS generation.', 'error');
+            if (error.name === 'AbortError') {
+                showNotification('Request cancelled.', 'info');
+            } else {
+                console.error('TTS Generation Error:', error);
+                showNotification(error.message || 'An unknown error occurred during TTS generation.', 'error');
+            }
         } finally {
+            activeTtsAbortController = null;
             isGenerating = false;
             hideLoadingOverlay();
         }
@@ -1212,7 +1296,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         hideGenerationWarningModal(); debouncedSaveState(); proceedWithSubmissionChecks();
     });
     if (loadingCancelBtn) loadingCancelBtn.addEventListener('click', () => {
-        if (isGenerating) { isGenerating = false; hideLoadingOverlay(); showNotification("Generation UI cancelled by user.", "info"); }
+        if (activeTtsAbortController) {
+            try { activeTtsAbortController.abort(); } catch (e) { /* ignore */ }
+        }
     });
     function showLoadingOverlay() {
         if (loadingOverlay && generateBtn && loadingCancelBtn) {
@@ -1322,7 +1408,16 @@ document.addEventListener('DOMContentLoaded', async function () {
                 const response = await fetch(`${API_BASE_URL}/save_settings`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ generation_defaults: genParams })
+                    body: JSON.stringify({
+                        generation_defaults: genParams,
+                        ui_state: {
+                            last_temperature: genParams.temperature,
+                            last_exaggeration: genParams.exaggeration,
+                            last_cfg_weight: genParams.cfg_weight,
+                            last_language: genParams.language,
+                            last_seed: genParams.seed,
+                        },
+                    })
                 });
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.detail || 'Failed to save generation defaults');

@@ -83,6 +83,18 @@ async def custom_tts_endpoint(
         cuda_sync=config_manager.get_bool("server.performance_cuda_sync", False),
     )
     perf_monitor.record("TTS request received")
+    requested_output_format = request.output_format if request.output_format else get_audio_output_format()
+    logger.info(
+        "TTS request intake: endpoint=/tts request_id=%s streaming=%s "
+        "output_format=%s voice_mode=%s split_text=%s chunk_size=%s text_chars=%s",
+        perf_monitor.request_id,
+        bool(request.stream),
+        requested_output_format,
+        request.voice_mode,
+        bool(request.split_text),
+        request.chunk_size,
+        len(request.text or ""),
+    )
 
     if not engine.MODEL_LOADED:
         logger.error("TTS request failed: Model not loaded.")
@@ -91,9 +103,6 @@ async def custom_tts_endpoint(
             detail="TTS engine model is not currently loaded or available.",
         )
 
-    logger.info(
-        f"Received /tts request: mode='{request.voice_mode}', format='{request.output_format}'"
-    )
     logger.debug(
         f"TTS params: seed={request.seed}, split={request.split_text}, chunk_size={request.chunk_size}"
     )
@@ -167,8 +176,15 @@ async def custom_tts_endpoint(
             status_code=400, detail="Text processing resulted in no usable chunks."
         )
 
-    output_format_str = (
-        request.output_format if request.output_format else get_audio_output_format()
+    output_format_str = requested_output_format
+    logger.info(
+        "TTS request resolved: endpoint=/tts request_id=%s streaming=%s "
+        "output_format=%s chunks=%s voice_mode=%s",
+        perf_monitor.request_id,
+        bool(request.stream),
+        output_format_str,
+        len(text_chunks),
+        request.voice_mode,
     )
     timestamp_str = time.strftime("%Y%m%d_%H%M%S")
     param_tag = (

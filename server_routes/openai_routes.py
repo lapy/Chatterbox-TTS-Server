@@ -52,6 +52,17 @@ async def openai_voices_endpoint(model: str = ""):
 @router.post("/v1/audio/speech", tags=["OpenAI Compatible"])
 @limit_tts_concurrency
 async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Request):
+    logger.info(
+        "TTS request intake: endpoint=/v1/audio/speech streaming_requested=%s "
+        "stream_format=%s response_format=%s voice=%s model=%s text_chars=%s",
+        request.stream_format is not None,
+        request.stream_format or "buffered",
+        request.response_format,
+        request.voice,
+        request.model,
+        len(request.input_ or ""),
+    )
+
     predefined_voices_path = get_predefined_voices_path(ensure_absolute=True)
     reference_audio_path = get_reference_audio_path(ensure_absolute=True)
     voice_path_predefined = predefined_voices_path / request.voice
@@ -127,6 +138,18 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Req
                 "OpenAI speech: stream_format omitted; using incremental audio streaming "
                 f"for {len(text_chunks)} chunk(s) ({request.response_format})."
             )
+        logger.info(
+            "TTS request resolved: endpoint=/v1/audio/speech request_id=%s "
+            "streaming=%s stream_format=%s response_format=%s chunks=%s "
+            "split_text=%s chunk_size=%s",
+            perf_monitor.request_id,
+            effective_stream_format is not None,
+            effective_stream_format or "buffered",
+            request.response_format,
+            len(text_chunks),
+            split_enabled,
+            chunk_size_cfg,
+        )
 
         if (
             effective_stream_format is not None

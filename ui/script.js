@@ -1915,6 +1915,12 @@ document.addEventListener('DOMContentLoaded', async function () {
         const us = currentConfig.ui_state || {};
         const gd = currentConfig.generation_defaults || {};
         const fieldsToDisplay = {
+            "audio_output.codec_timing.lossy_short_leading_pad_sec": currentConfig.audio_output?.codec_timing?.lossy_short_leading_pad_sec,
+            "audio_output.codec_timing.lossy_multichunk_leading_pad_sec": currentConfig.audio_output?.codec_timing?.lossy_multichunk_leading_pad_sec,
+            "audio_output.codec_timing.lossy_trailing_flush_sec": currentConfig.audio_output?.codec_timing?.lossy_trailing_flush_sec,
+            "audio_output.codec_timing.streaming_opus_preroll_sec": currentConfig.audio_output?.codec_timing?.streaming_opus_preroll_sec,
+            "audio_output.codec_timing.streaming_mp3_min_pcm_sec": currentConfig.audio_output?.codec_timing?.streaming_mp3_min_pcm_sec,
+            "audio_output.codec_timing.streaming_inter_chunk_gap_sec": currentConfig.audio_output?.codec_timing?.streaming_inter_chunk_gap_sec,
             "server.host": currentConfig.server?.host,
             "server.port": currentConfig.server?.port,
             "server.auth_username": currentConfig.server?.auth_username,
@@ -1922,6 +1928,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             "server.cors_origins": Array.isArray(currentConfig.server?.cors_origins)
                 ? currentConfig.server.cors_origins.join(',')
                 : (currentConfig.server?.cors_origins || ''),
+            "server.max_concurrent_tts_requests": currentConfig.server?.max_concurrent_tts_requests,
             "server.log_file_path": currentConfig.server?.log_file_path,
             "server.log_file_max_size_mb": currentConfig.server?.log_file_max_size_mb,
             "server.log_file_backup_count": currentConfig.server?.log_file_backup_count,

@@ -651,7 +651,6 @@ async def _stream_encoded_audio_from_pcm(
         except BaseException as exc:
             writer_error = exc
         finally:
-            stop_event.set()
             if not cancelled:
                 with suppress(Exception):
                     proc.stdin.close()

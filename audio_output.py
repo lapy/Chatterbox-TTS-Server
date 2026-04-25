@@ -63,7 +63,7 @@ class CodecTimingPolicy:
         lossy = output_format in {"mp3", "opus"}
         if not lossy:
             leading = 0.0
-        elif chunk_count <= 1:
+        elif stream_format == StreamFormat.NONE or chunk_count <= 1:
             leading = short_leading
         else:
             leading = multichunk_leading

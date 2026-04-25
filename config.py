@@ -136,7 +136,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "codec_timing": {
             # Guard silence for short lossy outputs. Kept small to avoid audible startup delay.
             "lossy_short_leading_pad_sec": 0.35,
-            # Guard silence for multi-chunk lossy outputs where encoder/client startup loss is more visible.
+            # Guard silence for multi-chunk compressed streaming where client startup loss is more visible.
             "lossy_multichunk_leading_pad_sec": 2.50,
             # Flush silence appended before closing lossy encoders.
             "lossy_trailing_flush_sec": 0.10,

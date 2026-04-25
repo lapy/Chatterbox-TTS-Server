@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import pytest
+
 import utils
 from audio_output import AudioOutputPolicy, StreamFormat
+
+
+@pytest.fixture(autouse=True)
+def codec_timing_defaults(monkeypatch):
+    monkeypatch.setattr(
+        "audio_output.config_manager.get_float",
+        lambda _key, fallback=None: fallback,
+    )
 
 
 def test_audio_output_policy_short_lossy_single_chunk():
@@ -28,6 +38,19 @@ def test_audio_output_policy_multichunk_streaming_opus_preroll():
     assert policy.is_compressed_streaming
     assert policy.timing.leading_pad_sec == utils.LOSSY_ENCODE_LEADING_PAD_SEC
     assert policy.timing.streaming_opus_preroll_sec == utils.LOSSY_ENCODE_LEADING_PAD_SEC
+
+
+def test_audio_output_policy_multichunk_buffered_lossy_uses_short_guard():
+    policy = AudioOutputPolicy(
+        output_format="opus",
+        target_sample_rate=24000,
+        chunk_count=31,
+        stream_format=StreamFormat.NONE,
+    )
+
+    assert not policy.is_streaming
+    assert policy.timing.leading_pad_sec == utils.LOSSY_ENCODE_SHORT_LEADING_PAD_SEC
+    assert policy.timing.streaming_opus_preroll_sec == 0.0
 
 
 def test_audio_output_policy_wav_has_no_lossy_delay():

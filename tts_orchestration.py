@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, List, Optional, Tuple
 
 import numpy as np
 from starlette.concurrency import run_in_threadpool
@@ -116,13 +116,14 @@ def build_text_chunks(
     chunk_size_min: int = 50,
     chunk_size_max: int = 1000,
 ) -> List[str]:
+    import utils as _utils
+
+    normalized_text = _utils.normalize_markdown_for_tts(text)
     chunk_size_clamped = max(chunk_size_min, min(chunk_size_max, int(chunk_size)))
     threshold = chunk_size_clamped * 1.5
-    if split_enabled and len(text) > threshold:
-        import utils as _utils
-
-        return _utils.chunk_text_by_sentences(text, chunk_size_clamped)
-    return [text]
+    if split_enabled and len(normalized_text) > threshold:
+        return _utils.chunk_text_by_sentences(normalized_text, chunk_size_clamped)
+    return [normalized_text] if normalized_text else []
 
 
 async def _chunk_quality_failure_reason(
@@ -152,6 +153,7 @@ async def synthesize_text_chunks_async(
     *,
     perf_monitor: Optional[Any] = None,
     log_prefix: str = "TTS",
+    cancellation_check: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> Tuple[List[np.ndarray], int]:
     """
     Run chunked synthesis. Speed adjustment is applied once on the stitched waveform
@@ -165,7 +167,10 @@ async def synthesize_text_chunks_async(
     )
     chunks_count = len(text_chunks)
     # 0 or negative => single batch (one threadpool hop) for lowest orchestration overhead.
-    batch_size = chunks_count if batch_cfg <= 0 else max(1, batch_cfg)
+    if batch_cfg <= 0:
+        batch_size = 1 if cancellation_check is not None else chunks_count
+    else:
+        batch_size = max(1, batch_cfg)
     logger.info(
         f"{log_prefix}: chunk synthesis batch_size={batch_size} (cfg={batch_cfg}), "
         f"parallel_chunk_workers={parallel_workers_cfg}, chunks={chunks_count}"
@@ -173,6 +178,8 @@ async def synthesize_text_chunks_async(
     segments: List[np.ndarray] = []
     engine_sr: Optional[int] = None
     for batch_start in range(0, chunks_count, batch_size):
+        if cancellation_check is not None:
+            await cancellation_check()
         batch_end = min(batch_start + batch_size, chunks_count)
         batch_len = batch_end - batch_start
         use_parallel = parallel_workers_cfg > 1 and batch_len > 1
@@ -228,7 +235,11 @@ async def synthesize_text_chunks_async(
                 perf_monitor=perf_monitor,
                 log_prefix=log_prefix,
             )
+        if cancellation_check is not None:
+            await cancellation_check()
         for batch_offset, (audio_tensor, sr) in enumerate(batch_results):
+            if cancellation_check is not None:
+                await cancellation_check()
             chunk_index = batch_start + batch_offset + 1
             if audio_tensor is None or sr is None:
                 raise RuntimeError(
@@ -255,12 +266,18 @@ async def synthesize_text_chunks_async(
     )
     if max_quality_retries > 0 and chunks_count > 0:
         for i in range(chunks_count):
+            if cancellation_check is not None:
+                await cancellation_check()
             chunk_text = text_chunks[i]
             chunk_idx = i + 1
             for attempt in range(max_quality_retries + 1):
+                if cancellation_check is not None:
+                    await cancellation_check()
                 reason = await _chunk_quality_failure_reason(
                     segments[i], engine_sr, chunk_text
                 )
+                if cancellation_check is not None:
+                    await cancellation_check()
                 if reason is None:
                     break
                 if attempt >= max_quality_retries:
@@ -301,6 +318,8 @@ async def synthesize_text_chunks_async(
                     chunk_total=chunks_count,
                     log_prefix=f"{log_prefix} retry",
                 )
+                if cancellation_check is not None:
+                    await cancellation_check()
                 if audio_tensor is None or sr is None:
                     logger.error(
                         "%sretry failed for chunk %s/%s",

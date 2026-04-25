@@ -25,11 +25,11 @@ from tts_orchestration import (
 
 
 def test_build_text_chunks_no_split_when_disabled():
-    text = "Hello. " * 100
+    text = "**Hello.** " * 100
     chunks = build_text_chunks(
         text, split_enabled=False, chunk_size=50, chunk_size_max=200
     )
-    assert chunks == [text]
+    assert chunks == [("Hello. " * 100).strip()]
 
 
 def test_build_text_chunks_no_split_when_below_threshold():
@@ -49,7 +49,10 @@ def test_build_text_chunks_splits_when_long(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "utils",
-        types.SimpleNamespace(chunk_text_by_sentences=fake_chunk),
+        types.SimpleNamespace(
+            chunk_text_by_sentences=fake_chunk,
+            normalize_markdown_for_tts=lambda value: value,
+        ),
     )
     text = "Hello. " * 40
     assert len(text) > 100 * 1.5
@@ -70,7 +73,10 @@ def test_build_text_chunks_clamps_chunk_size(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "utils",
-        types.SimpleNamespace(chunk_text_by_sentences=fake_chunk),
+        types.SimpleNamespace(
+            chunk_text_by_sentences=fake_chunk,
+            normalize_markdown_for_tts=lambda value: value,
+        ),
     )
     # Long enough to split for both chunk_size cases (threshold = chunk_size * 1.5)
     text = "x. " * 400

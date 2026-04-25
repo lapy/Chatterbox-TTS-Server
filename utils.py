@@ -212,6 +212,51 @@ MD_UNORDERED_LIST_PATTERN = re.compile(r"^\s*[-+*]\s+", re.MULTILINE)
 MD_ORDERED_LIST_PATTERN = re.compile(r"^\s*(\d+)\.\s+", re.MULTILINE)
 MD_CODE_SPAN_PATTERN = re.compile(r"`([^`]+)`")
 MD_EMPHASIS_PATTERN = re.compile(r"(\*\*|__|\*|_)([^*_]+?)\1")
+MD_LEFTOVER_FORMAT_MARKERS_PATTERN = re.compile(r"\*+|(?<!\w)_{1,3}(?!\w)")
+MD_HORIZONTAL_RULE_PATTERN = re.compile(r"^\s{0,3}([-*_])(?:\s*\1){2,}\s*$", re.MULTILINE)
+LATEX_INLINE_MATH_PATTERN = re.compile(r"\${1,2}([^$]+?)\${1,2}", re.DOTALL)
+LATEX_PAREN_MATH_PATTERN = re.compile(r"\\\((.*?)\\\)", re.DOTALL)
+LATEX_BRACKET_MATH_PATTERN = re.compile(r"\\\[(.*?)\\\]", re.DOTALL)
+LATEX_COMMAND_REPLACEMENTS = {
+    r"\Longleftrightarrow": " if and only if ",
+    r"\longleftrightarrow": " if and only if ",
+    r"\Leftrightarrow": " if and only if ",
+    r"\leftrightarrow": " if and only if ",
+    r"\Longrightarrow": " implies ",
+    r"\longrightarrow": " to ",
+    r"\Rightarrow": " implies ",
+    r"\rightarrow": " to ",
+    r"\mapsto": " maps to ",
+    r"\Longleftarrow": " implied by ",
+    r"\longleftarrow": " from ",
+    r"\Leftarrow": " implied by ",
+    r"\leftarrow": " from ",
+    r"\gets": " gets ",
+    r"\to": " to ",
+    r"\leq": " less than or equal to ",
+    r"\geq": " greater than or equal to ",
+    r"\neq": " not equal to ",
+    r"\times": " times ",
+    r"\cdot": " times ",
+    r"\pm": " plus or minus ",
+}
+UNICODE_MATH_REPLACEMENTS = {
+    "⟺": " if and only if ",
+    "↔": " if and only if ",
+    "⟹": " implies ",
+    "⇒": " implies ",
+    "→": " to ",
+    "↦": " maps to ",
+    "⟸": " implied by ",
+    "⇐": " implied by ",
+    "←": " from ",
+    "≤": " less than or equal to ",
+    "≥": " greater than or equal to ",
+    "≠": " not equal to ",
+    "×": " times ",
+    "·": " times ",
+    "±": " plus or minus ",
+}
 EMOJI_PATTERN = re.compile(
     "["
     "\U0001F300-\U0001F5FF"  # Misc Symbols and Pictographs
@@ -223,8 +268,14 @@ EMOJI_PATTERN = re.compile(
     "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
     "\U0001FA00-\U0001FA6F"  # Chess/Misc symbols
     "\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+    "\U0001F1E6-\U0001F1FF"  # Regional indicator symbols (flags)
+    "\U0001F3FB-\U0001F3FF"  # Skin tone modifiers
+    "\U000E0020-\U000E007F"  # Tag characters used by some flag emoji sequences
     "\U00002700-\U000027BF"  # Dingbats
     "\U00002600-\U000026FF"  # Misc symbols
+    "\U0000FE0E-\U0000FE0F"  # Text/emoji variation selectors
+    "\U0000200D"  # Zero width joiner in compound emoji
+    "\U000020E3"  # Combining enclosing keycap
     "]+",
     flags=re.UNICODE,
 )
@@ -265,8 +316,9 @@ def _is_supported_non_verbal_cue(candidate: str) -> bool:
 
 # --- Audio Processing Utilities ---
 # Prepend before MP3/Opus so decoder priming / Layer-III delay does not clip the first words.
-# Many clients need well over 80ms; 300ms is a safer default for streaming + picky decoders.
-LOSSY_ENCODE_LEADING_PAD_SEC = 0.30
+# Many clients need well over 80ms; keep enough headroom for streaming decoders
+# that otherwise start audible playback after the first speech frames.
+LOSSY_ENCODE_LEADING_PAD_SEC = 0.80
 # Append after speech so encoders (LAME, libopus) can emit complete final frames; avoids cut-off mid-word.
 LOSSY_ENCODE_TRAILING_FLUSH_SEC = 0.35
 
@@ -1228,6 +1280,42 @@ def split_into_sentences(text: str) -> List[str]:
         return _split_text_by_punctuation(text)
 
 
+def _normalize_latex_math_fragment(fragment: str, *, collapse_spaces: bool = True) -> str:
+    normalized = fragment
+    for command, replacement in sorted(
+        LATEX_COMMAND_REPLACEMENTS.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        normalized = normalized.replace(command, replacement)
+    for symbol, replacement in UNICODE_MATH_REPLACEMENTS.items():
+        normalized = normalized.replace(symbol, replacement)
+    # Drop braces used only for grouping and unwrap unknown simple commands to words.
+    normalized = normalized.replace("{", " ").replace("}", " ")
+    normalized = re.sub(r"\\([A-Za-z]+)", r"\1", normalized)
+    if collapse_spaces:
+        normalized = normalized.replace("\\", "")
+        return re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def normalize_latex_for_tts(text: str) -> str:
+    """Convert common inline LaTeX/math notation into plain TTS-friendly text."""
+    if not text:
+        return text
+
+    normalized = text
+    for pattern in (
+        LATEX_BRACKET_MATH_PATTERN,
+        LATEX_PAREN_MATH_PATTERN,
+        LATEX_INLINE_MATH_PATTERN,
+    ):
+        normalized = pattern.sub(
+            lambda match: _normalize_latex_math_fragment(match.group(1)), normalized
+        )
+    # Also handle common escaped commands that appear without explicit math delimiters.
+    normalized = _normalize_latex_math_fragment(normalized, collapse_spaces=False)
+    return normalized
+
+
 def normalize_markdown_for_tts(text: str) -> str:
     """
     Convert common markdown formatting into plain text suitable for TTS.
@@ -1236,7 +1324,9 @@ def normalize_markdown_for_tts(text: str) -> str:
         return text
 
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalize_latex_for_tts(normalized)
     normalized = MD_HEADING_PATTERN.sub("", normalized)
+    normalized = MD_HORIZONTAL_RULE_PATTERN.sub("", normalized)
     normalized = MD_UNORDERED_LIST_PATTERN.sub("", normalized)
     normalized = MD_ORDERED_LIST_PATTERN.sub(r"\1. ", normalized)
     normalized = MD_CODE_SPAN_PATTERN.sub(r"\1", normalized)
@@ -1246,6 +1336,7 @@ def normalize_markdown_for_tts(text: str) -> str:
     while previous != normalized:
         previous = normalized
         normalized = MD_EMPHASIS_PATTERN.sub(r"\2", normalized)
+    normalized = MD_LEFTOVER_FORMAT_MARKERS_PATTERN.sub("", normalized)
 
     # Strip emojis/symbol pictographs for cleaner TTS pronunciation.
     normalized = EMOJI_PATTERN.sub("", normalized)

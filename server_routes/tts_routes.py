@@ -1,5 +1,6 @@
 """Custom POST /tts route."""
 import io
+import asyncio
 import logging
 import shutil
 import time
@@ -9,7 +10,7 @@ from typing import Optional
 
 import torch
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 import engine
@@ -71,7 +72,7 @@ router = APIRouter()
 )
 @limit_tts_concurrency
 async def custom_tts_endpoint(
-    request: CustomTTSRequest, background_tasks: BackgroundTasks
+    request: CustomTTSRequest, background_tasks: BackgroundTasks, http_request: Request
 ):
     """
     Generates speech audio from text using specified parameters.
@@ -99,6 +100,11 @@ async def custom_tts_endpoint(
         f"TTS params: seed={request.seed}, split={request.split_text}, chunk_size={request.chunk_size}"
     )
     logger.debug(f"Input text (first 100 chars): '{request.text[:100]}...'")
+
+    async def raise_if_disconnected() -> None:
+        if await http_request.is_disconnected():
+            logger.info("/tts client disconnected; stopping non-streaming generation.")
+            raise asyncio.CancelledError()
 
     audio_prompt_path_for_engine: Optional[Path] = None
     if request.voice_mode == "predefined":
@@ -236,6 +242,7 @@ async def custom_tts_endpoint(
                 params,
                 perf_monitor=perf_monitor,
                 log_prefix="/tts",
+                cancellation_check=raise_if_disconnected,
             )
         )
     except RuntimeError as e:
@@ -252,6 +259,7 @@ async def custom_tts_endpoint(
         )
 
     try:
+        await raise_if_disconnected()
         final_audio_np = _finalize_stitched_tts_audio(
             all_audio_segments_np,
             engine_output_sample_rate,
@@ -268,6 +276,7 @@ async def custom_tts_endpoint(
             )
             final_audio_np = sped_t.cpu().numpy().squeeze().astype(np.float32)
             perf_monitor.record("/tts speed_factor applied (post-stitch)")
+        await raise_if_disconnected()
 
     except ValueError as e_concat:
         logger.error(f"Audio concatenation/stitching failed: {e_concat}", exc_info=True)
@@ -277,6 +286,7 @@ async def custom_tts_endpoint(
             status_code=500, detail=f"Audio stitching error: {e_concat}"
         )
 
+    await raise_if_disconnected()
     encoded_audio_bytes = utils.encode_audio(
         audio_array=final_audio_np,
         sample_rate=engine_output_sample_rate,
@@ -318,6 +328,7 @@ async def custom_tts_endpoint(
 
     # Optional: Save to disk if enabled
     if config_manager.get_bool("audio_output.save_to_disk", False):
+        await raise_if_disconnected()
         output_dir = get_output_path(ensure_absolute=True)
         output_file_path = output_dir / download_filename
         try:

@@ -24,6 +24,19 @@ from config import config_manager
 logger = logging.getLogger(__name__)
 
 
+def _queue_put_interruptible(
+    q: queue.Queue, item: Optional[bytes], stop_event: threading.Event
+) -> bool:
+    """Put into a bounded cross-thread queue without getting stuck after cancellation."""
+    while not stop_event.is_set():
+        try:
+            q.put(item, timeout=0.1)
+            return True
+        except queue.Full:
+            continue
+    return False
+
+
 def _generate_equal_power_curves(n_samples: int):
     """
     Generate equal-power crossfade curves using cos²/sin² functions.
@@ -371,6 +384,7 @@ async def async_iter_locked_pcm_s16le(
     ).tobytes()
     pcm_queue: queue.Queue = queue.Queue(maxsize=8)
     thread_exc: List[BaseException] = []
+    stop_event = threading.Event()
 
     def _producer() -> None:
         try:
@@ -388,38 +402,51 @@ async def async_iter_locked_pcm_s16le(
                     log_prefix=f"{log_prefix} engine",
                 )
             ):
+                if stop_event.is_set():
+                    break
                 if speed != 1.0:
                     audio_tensor, sr = utils.apply_speed_factor(
                         audio_tensor, sr, speed
                     )
                 chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
                 wave = _ensure_mono_waveform_1d(chunk_np)
-                pcm_queue.put(
-                    _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate)
-                )
+                if not _queue_put_interruptible(
+                    pcm_queue,
+                    _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate),
+                    stop_event,
+                ):
+                    break
                 if i < n - 1:
-                    pcm_queue.put(inter_chunk_gap_bytes)
-            pcm_queue.put(None)
+                    if not _queue_put_interruptible(
+                        pcm_queue, inter_chunk_gap_bytes, stop_event
+                    ):
+                        break
+            _queue_put_interruptible(pcm_queue, None, stop_event)
         except BaseException as exc:
             thread_exc.append(exc)
-            pcm_queue.put(None)
+            _queue_put_interruptible(pcm_queue, None, stop_event)
 
     threading.Thread(target=_producer, daemon=True).start()
     stream_t0 = time.monotonic()
     first_pcm = True
-    while True:
-        item = await asyncio.to_thread(pcm_queue.get)
-        if item is None:
-            if thread_exc:
-                raise thread_exc[0]
-            break
-        if first_pcm and perf_monitor is not None:
-            perf_monitor.record_duration(
-                f"{log_prefix} streaming TTFB (first PCM ready)",
-                time.monotonic() - stream_t0,
-            )
-            first_pcm = False
-        yield item
+    try:
+        while True:
+            item = await asyncio.to_thread(pcm_queue.get)
+            if item is None:
+                if thread_exc:
+                    raise thread_exc[0]
+                break
+            if first_pcm and perf_monitor is not None:
+                perf_monitor.record_duration(
+                    f"{log_prefix} streaming TTFB (first PCM ready)",
+                    time.monotonic() - stream_t0,
+                )
+                first_pcm = False
+            yield item
+    finally:
+        stop_event.set()
+        with suppress(queue.Full):
+            pcm_queue.put_nowait(None)
 
 
 def _get_audio_media_type(output_format: str) -> str:
@@ -546,6 +573,7 @@ async def _stream_encoded_audio_from_pcm(
     # at 24 kHz (even after stdin EOF). Pad with trailing silence so short lines work.
     min_mp3_pcm_samples = int(target_sample_rate * 2.6)
     writer_error: Optional[BaseException] = None
+    stop_event = threading.Event()
 
     async def _collect_stderr() -> None:
         while True:
@@ -559,6 +587,8 @@ async def _stream_encoded_audio_from_pcm(
         pcm_samples_written = 0
         stream_t0 = time.monotonic()
         first_pcm_logged = False
+        pcm_queue: Optional[queue.Queue] = None
+        cancelled = False
         try:
             lead_pad_samples = 0
             if output_format in ("mp3", "opus"):
@@ -571,7 +601,7 @@ async def _stream_encoded_audio_from_pcm(
                 pcm_samples_written += lead_pad_samples
 
             if locked_synthesis is not None:
-                pcm_queue: queue.Queue = queue.Queue(maxsize=4)
+                pcm_queue = queue.Queue(maxsize=4)
                 thread_exc: List[BaseException] = []
 
                 def _producer() -> None:
@@ -591,6 +621,8 @@ async def _stream_encoded_audio_from_pcm(
                                 log_prefix=f"{log_prefix} engine",
                             )
                         ):
+                            if stop_event.is_set():
+                                break
                             if speed != 1.0:
                                 audio_tensor, sr = utils.apply_speed_factor(
                                     audio_tensor, sr, speed
@@ -602,13 +634,19 @@ async def _stream_encoded_audio_from_pcm(
                             pcm = _float32_to_pcm_s16le_bytes(
                                 wave, sr, target_sample_rate
                             )
-                            pcm_queue.put(pcm)
+                            if not _queue_put_interruptible(
+                                pcm_queue, pcm, stop_event
+                            ):
+                                break
                             if i < n - 1:
-                                pcm_queue.put(inter_chunk_gap_bytes)
-                        pcm_queue.put(None)
+                                if not _queue_put_interruptible(
+                                    pcm_queue, inter_chunk_gap_bytes, stop_event
+                                ):
+                                    break
+                        _queue_put_interruptible(pcm_queue, None, stop_event)
                     except BaseException as exc:
                         thread_exc.append(exc)
-                        pcm_queue.put(None)
+                        _queue_put_interruptible(pcm_queue, None, stop_event)
 
                 threading.Thread(target=_producer, daemon=True).start()
 
@@ -668,14 +706,18 @@ async def _stream_encoded_audio_from_pcm(
                     proc.stdin.write(b"\x00\x00" * pad_samples)
                     await proc.stdin.drain()
         except asyncio.CancelledError:
+            cancelled = True
             raise
         except BaseException as exc:
             writer_error = exc
         finally:
-            with suppress(Exception):
-                proc.stdin.close()
-            with suppress(Exception):
-                await proc.stdin.wait_closed()
+            stop_event.set()
+            if pcm_queue is not None:
+                with suppress(queue.Full):
+                    pcm_queue.put_nowait(None)
+            if not cancelled:
+                with suppress(Exception):
+                    proc.stdin.close()
 
     stderr_task = asyncio.create_task(_collect_stderr())
     writer_task = asyncio.create_task(_writer())
@@ -735,6 +777,7 @@ async def _stream_encoded_audio_from_pcm(
             yield f"data: {done_payload}\n\n".encode("utf-8")
 
     finally:
+        stop_event.set()
         if not writer_task.done():
             writer_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -745,6 +788,11 @@ async def _stream_encoded_audio_from_pcm(
                 await stderr_task
         if proc.returncode is None:
             with suppress(ProcessLookupError):
-                proc.kill()
-            with suppress(Exception):
-                await proc.wait()
+                proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                with suppress(ProcessLookupError):
+                    proc.kill()
+                with suppress(Exception):
+                    await proc.wait()

@@ -1,4 +1,5 @@
 """OpenAI-compatible speech API routes."""
+import asyncio
 import base64
 import io
 import json
@@ -8,7 +9,7 @@ import time
 import uuid
 import numpy as np
 import torch
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 import engine
@@ -51,7 +52,7 @@ async def openai_voices_endpoint(model: str = ""):
 
 @router.post("/v1/audio/speech", tags=["OpenAI Compatible"])
 @limit_tts_concurrency
-async def openai_speech_endpoint(request: OpenAISpeechRequest):
+async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Request):
     predefined_voices_path = get_predefined_voices_path(ensure_absolute=True)
     reference_audio_path = get_reference_audio_path(ensure_absolute=True)
     voice_path_predefined = predefined_voices_path / request.voice
@@ -172,6 +173,13 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
             "speed_factor": params.speed_factor,
         }
 
+        async def raise_if_disconnected() -> None:
+            if await http_request.is_disconnected():
+                logger.info(
+                    "OpenAI speech client disconnected; stopping non-streaming generation."
+                )
+                raise asyncio.CancelledError()
+
         if effective_stream_format == "audio":
 
             async def raw_audio_stream():
@@ -243,8 +251,10 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
             params,
             perf_monitor=perf_monitor,
             log_prefix="OpenAI speech",
+            cancellation_check=raise_if_disconnected,
         )
 
+        await raise_if_disconnected()
         final_audio_np = _finalize_stitched_tts_audio(
             all_audio_segments_np,
             engine_sr,
@@ -262,6 +272,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
             final_audio_np = sped_t.cpu().numpy().squeeze().astype(np.float32)
             perf_monitor.record("OpenAI speech speed_factor applied (post-stitch)")
 
+        await raise_if_disconnected()
         encoded_audio = utils.encode_audio(
             audio_array=final_audio_np,
             sample_rate=engine_sr,
@@ -282,6 +293,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
         media_type = _get_audio_media_type(request.response_format)
 
         if config_manager.get_bool("audio_output.save_to_disk", False):
+            await raise_if_disconnected()
             output_dir = get_output_path(ensure_absolute=True)
             timestamp_str = time.strftime("%Y%m%d_%H%M%S")
             download_filename = f"openai_tts_{timestamp_str}.{request.response_format}"

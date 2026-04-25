@@ -38,6 +38,8 @@ document.addEventListener('DOMContentLoaded', async function () {
     const API_BASE_URL = IS_LOCAL_FILE ? 'http://localhost:8004' : '';
 
     const DEBOUNCE_DELAY_MS = 750;
+    const STREAM_START_MIN_BYTES = 64 * 1024;
+    const STREAM_START_MIN_APPENDS = 3;
 
     // Language options by model type
     const LANGUAGES_MULTILINGUAL = [
@@ -1414,6 +1416,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         let firstAppendMs = null;
         let firstPlayMs = null;
         let appendCount = 0;
+        let playbackStarted = false;
 
         return new Promise((resolve, reject) => {
             const onSourceOpen = async () => {
@@ -1480,9 +1483,12 @@ document.addEventListener('DOMContentLoaded', async function () {
                         if (loadingStatusText) {
                             const fb = firstByteMs != null ? firstByteMs : '--';
                             const fa = firstAppendMs != null ? firstAppendMs : '--';
+                            const bufferingForStart = !playbackStarted
+                                ? ` · startup buffer ${Math.min(100, Math.round((totalBytes / STREAM_START_MIN_BYTES) * 100))}%`
+                                : '';
                             loadingStatusText.textContent =
                                 `Streaming… ${(totalBytes / 1024).toFixed(1)} KB — ` +
-                                `net ${fb} ms · append ${fa} ms`;
+                                `net ${fb} ms · append ${fa} ms${bufferingForStart}`;
                         }
                         try {
                             await appendBufferAsync(sourceBuffer, u8);
@@ -1551,7 +1557,14 @@ document.addEventListener('DOMContentLoaded', async function () {
                             // eslint-disable-next-line no-console
                             console.info(`[TTS stream] first buffer append at ${firstAppendMs}ms (MSE)`);
                         }
-                        if (appendCount === 1) {
+                        if (
+                            !playbackStarted
+                            && (
+                                totalBytes >= STREAM_START_MIN_BYTES
+                                || appendCount >= STREAM_START_MIN_APPENDS
+                            )
+                        ) {
+                            playbackStarted = true;
                             hideLoadingOverlay();
                             audioEl.play().catch(() => {
                                 showNotification(
@@ -1561,6 +1574,18 @@ document.addEventListener('DOMContentLoaded', async function () {
                                 );
                             });
                         }
+                    }
+
+                    if (!playbackStarted && appendCount > 0) {
+                        playbackStarted = true;
+                        hideLoadingOverlay();
+                        audioEl.play().catch(() => {
+                            showNotification(
+                                'Audio is ready. Press Play in the player to start playback.',
+                                'info',
+                                6000
+                            );
+                        });
                     }
 
                     const endTime = performance.now();

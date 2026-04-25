@@ -38,8 +38,8 @@ document.addEventListener('DOMContentLoaded', async function () {
     const API_BASE_URL = IS_LOCAL_FILE ? 'http://localhost:8004' : '';
 
     const DEBOUNCE_DELAY_MS = 750;
-    const STREAM_START_MIN_BYTES = 64 * 1024;
-    const STREAM_START_MIN_APPENDS = 3;
+    const STREAM_APPEND_MIN_BYTES = 128 * 1024;
+    const STREAM_START_MIN_BYTES = 256 * 1024;
 
     // Language options by model type
     const LANGUAGES_MULTILINGUAL = [
@@ -1215,6 +1215,16 @@ document.addEventListener('DOMContentLoaded', async function () {
         });
     }
 
+    function concatUint8Arrays(parts, totalBytes) {
+        const out = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const part of parts) {
+            out.set(part, offset);
+            offset += part.byteLength;
+        }
+        return out;
+    }
+
     /**
      * Streamed MP3/Opus uses the native audio element so playback matches the streamed container
      * (Ogg Opus vs WaveSurfer/Web Audio blob decoding).
@@ -1417,6 +1427,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         let firstPlayMs = null;
         let appendCount = 0;
         let playbackStarted = false;
+        let pendingAppendChunks = [];
+        let pendingAppendBytes = 0;
 
         return new Promise((resolve, reject) => {
             const onSourceOpen = async () => {
@@ -1464,6 +1476,45 @@ document.addEventListener('DOMContentLoaded', async function () {
                         }
                         const { done, value } = await reader.read();
                         if (done) {
+                            if (pendingAppendBytes > 0) {
+                                const finalAppend = concatUint8Arrays(pendingAppendChunks, pendingAppendBytes);
+                                pendingAppendChunks = [];
+                                pendingAppendBytes = 0;
+                                try {
+                                    await appendBufferAsync(sourceBuffer, finalAppend);
+                                } catch (appendErr) {
+                                    // eslint-disable-next-line no-console
+                                    console.warn('[TTS stream] final MSE append failed, falling back to Blob playback:', appendErr);
+                                    const endBlob = new Blob(chunksForDownload, { type: contentType || 'application/octet-stream' });
+                                    const finalUrl = URL.createObjectURL(endBlob);
+                                    if (currentAudioBlobUrl) {
+                                        try { URL.revokeObjectURL(currentAudioBlobUrl); } catch (e) { /* ignore */ }
+                                    }
+                                    currentAudioBlobUrl = finalUrl;
+                                    if (objectUrl) {
+                                        try { URL.revokeObjectURL(objectUrl); } catch (e) { /* ignore */ }
+                                    }
+                                    audioEl.src = finalUrl;
+                                    if (currentStreamDownloadObjectUrl) {
+                                        try { URL.revokeObjectURL(currentStreamDownloadObjectUrl); } catch (e) { /* ignore */ }
+                                    }
+                                    currentStreamDownloadObjectUrl = finalUrl;
+                                    if (downloadLink) {
+                                        downloadLink.href = finalUrl;
+                                        downloadLink.classList.remove('disabled');
+                                        downloadLink.removeAttribute('aria-disabled');
+                                    }
+                                    hideLoadingOverlay();
+                                    resolve();
+                                    return;
+                                }
+                                appendCount += 1;
+                                if (firstAppendMs === null) {
+                                    firstAppendMs = Math.round(performance.now() - startTime);
+                                    // eslint-disable-next-line no-console
+                                    console.info(`[TTS stream] first buffer append at ${firstAppendMs}ms (MSE)`);
+                                }
+                            }
                             await waitSourceBufferNotUpdating(sourceBuffer);
                             if (mediaSource.readyState === 'open') {
                                 try { mediaSource.endOfStream(); } catch (e) { /* ignore */ }
@@ -1480,6 +1531,8 @@ document.addEventListener('DOMContentLoaded', async function () {
                         u8.set(value);
                         totalBytes += u8.byteLength;
                         chunksForDownload.push(u8);
+                        pendingAppendChunks.push(u8);
+                        pendingAppendBytes += u8.byteLength;
                         if (loadingStatusText) {
                             const fb = firstByteMs != null ? firstByteMs : '--';
                             const fa = firstAppendMs != null ? firstAppendMs : '--';
@@ -1490,8 +1543,14 @@ document.addEventListener('DOMContentLoaded', async function () {
                                 `Streaming… ${(totalBytes / 1024).toFixed(1)} KB — ` +
                                 `net ${fb} ms · append ${fa} ms${bufferingForStart}`;
                         }
+                        if (pendingAppendBytes < STREAM_APPEND_MIN_BYTES) {
+                            continue;
+                        }
+                        const appendData = concatUint8Arrays(pendingAppendChunks, pendingAppendBytes);
+                        pendingAppendChunks = [];
+                        pendingAppendBytes = 0;
                         try {
-                            await appendBufferAsync(sourceBuffer, u8);
+                            await appendBufferAsync(sourceBuffer, appendData);
                         } catch (appendErr) {
                             // eslint-disable-next-line no-console
                             console.warn('[TTS stream] MSE append failed, falling back to Blob playback:', appendErr);
@@ -1559,10 +1618,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                         }
                         if (
                             !playbackStarted
-                            && (
-                                totalBytes >= STREAM_START_MIN_BYTES
-                                || appendCount >= STREAM_START_MIN_APPENDS
-                            )
+                            && totalBytes >= STREAM_START_MIN_BYTES
                         ) {
                             playbackStarted = true;
                             hideLoadingOverlay();

@@ -488,12 +488,12 @@ def _get_ffmpeg_stream_command(
     if output_format == "opus":
         # Ogg muxer default page_duration is ~1s (ffmpeg libavformat), which delays the
         # first bytes on stdout until roughly that much encoded timeline is muxed.
-        # Smaller pages + low-delay libopus settings improve time-to-first-byte for streaming.
+        # Smaller pages improve time-to-first-byte while retaining a standard Opus profile.
         return base_cmd + [
             "-c:a",
             "libopus",
             "-application",
-            "lowdelay",
+            "audio",
             "-frame_duration",
             "20",
             "-f",
@@ -572,6 +572,9 @@ async def _stream_encoded_audio_from_pcm(
     # libmp3lame may write zero bytes on stdout if total PCM is shorter than ~2.5s
     # at 24 kHz (even after stdin EOF). Pad with trailing silence so short lines work.
     min_mp3_pcm_samples = int(target_sample_rate * 2.6)
+    # Some Ogg Opus streaming clients/bridges do not make the decoder ready until a few
+    # pages have passed. Feed enough initial silence that any startup loss is silence.
+    min_streaming_opus_preroll_samples = int(target_sample_rate * 2.5)
     writer_error: Optional[BaseException] = None
     stop_event = threading.Event()
 
@@ -595,6 +598,10 @@ async def _stream_encoded_audio_from_pcm(
                 lead_pad_samples = utils.lossy_encode_leading_silence_sample_count(
                     target_sample_rate
                 )
+                if output_format == "opus":
+                    lead_pad_samples = max(
+                        lead_pad_samples, min_streaming_opus_preroll_samples
+                    )
             if lead_pad_samples > 0:
                 proc.stdin.write(b"\x00\x00" * lead_pad_samples)
                 await proc.stdin.drain()

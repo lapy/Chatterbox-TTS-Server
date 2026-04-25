@@ -316,9 +316,9 @@ def _is_supported_non_verbal_cue(candidate: str) -> bool:
 
 # --- Audio Processing Utilities ---
 # Prepend before MP3/Opus so decoder priming / Layer-III delay does not clip the first words.
-# Many clients need well over 80ms; keep enough headroom for streaming decoders
-# that otherwise start audible playback after the first speech frames.
-LOSSY_ENCODE_LEADING_PAD_SEC = 0.80
+# Some MP3/Ogg Opus clients skip multiple seconds while priming/initializing.
+# Keep the sacrificial pre-roll in lossy formats only so WAV/PCM remain exact.
+LOSSY_ENCODE_LEADING_PAD_SEC = 2.50
 # Append after speech so encoders (LAME, libopus) can emit complete final frames; avoids cut-off mid-word.
 LOSSY_ENCODE_TRAILING_FLUSH_SEC = 0.35
 

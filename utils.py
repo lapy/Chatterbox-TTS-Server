@@ -316,14 +316,18 @@ def _is_supported_non_verbal_cue(candidate: str) -> bool:
 
 # --- Audio Processing Utilities ---
 # Prepend before MP3/Opus so decoder priming / Layer-III delay does not clip the first words.
-# Some MP3/Ogg Opus clients skip multiple seconds while priming/initializing.
-# Keep the sacrificial pre-roll in lossy formats only so WAV/PCM remain exact.
+# Keep sacrificial pre-roll in lossy formats only so WAV/PCM remain exact.
+# Multi-chunk/compressed streams need more headroom for picky decoders, while
+# very short single-chunk outputs should not begin with seconds of silence.
 LOSSY_ENCODE_LEADING_PAD_SEC = 2.50
+LOSSY_ENCODE_SHORT_LEADING_PAD_SEC = 0.35
 # Append after speech so encoders (LAME, libopus) can emit complete final frames; avoids cut-off mid-word.
 LOSSY_ENCODE_TRAILING_FLUSH_SEC = 0.35
 
 
-def lossy_encode_leading_silence_sample_count(sample_rate: int) -> int:
+def lossy_encode_leading_silence_sample_count(
+    sample_rate: int, leading_pad_sec: Optional[float] = None
+) -> int:
     """
     Mono PCM samples to prepend before MP3/Opus (file or ffmpeg pipe) so the real
     speech starts after decoder startup. Includes a granule-scaled floor (~2 MP3 frames
@@ -331,18 +335,22 @@ def lossy_encode_leading_silence_sample_count(sample_rate: int) -> int:
     """
     if sample_rate <= 0:
         return 0
-    sec = float(LOSSY_ENCODE_LEADING_PAD_SEC)
+    sec = float(
+        LOSSY_ENCODE_LEADING_PAD_SEC
+        if leading_pad_sec is None
+        else max(0.0, leading_pad_sec)
+    )
     n = max(0, int(sample_rate * sec))
     floor = max(1, int(2304 * sample_rate // 44100))
     return max(n, floor)
 
 
 def _prepend_lossy_encode_leading_silence(
-    audio: np.ndarray, sample_rate: int
+    audio: np.ndarray, sample_rate: int, leading_pad_sec: Optional[float] = None
 ) -> np.ndarray:
     if audio is None or audio.size == 0:
         return audio
-    n = lossy_encode_leading_silence_sample_count(sample_rate)
+    n = lossy_encode_leading_silence_sample_count(sample_rate, leading_pad_sec)
     if n <= 0:
         return audio
     pad = np.zeros(n, dtype=np.float32)
@@ -371,6 +379,7 @@ def encode_audio(
     sample_rate: int,
     output_format: str = "opus",
     target_sample_rate: Optional[int] = None,
+    lossy_leading_pad_sec: Optional[float] = None,
 ) -> Optional[bytes]:
     """
     Encodes a NumPy audio array into the specified format (Opus or WAV) in memory.
@@ -467,7 +476,7 @@ def encode_audio(
                     )
                     # Proceed with current rate, soundfile might handle it or fail.
             audio_to_write = _prepend_lossy_encode_leading_silence(
-                audio_to_write, rate_to_write
+                audio_to_write, rate_to_write, lossy_leading_pad_sec
             )
             audio_to_write = _append_lossy_encode_trailing_silence(
                 audio_to_write, rate_to_write
@@ -502,7 +511,7 @@ def encode_audio(
 
         elif output_format == "mp3":
             audio_padded = _prepend_lossy_encode_leading_silence(
-                audio_array, sample_rate
+                audio_array, sample_rate, lossy_leading_pad_sec
             )
             audio_padded = _append_lossy_encode_trailing_silence(
                 audio_padded, sample_rate

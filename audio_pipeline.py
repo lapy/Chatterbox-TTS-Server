@@ -11,14 +11,14 @@ import shutil
 import threading
 import time
 from contextlib import suppress
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import librosa
 import numpy as np
-from starlette.concurrency import run_in_threadpool
 
 import engine
 import utils
+from audio_output import CodecTimingPolicy, StreamFormat, get_audio_media_type
 from config import config_manager
 
 logger = logging.getLogger(__name__)
@@ -370,6 +370,7 @@ async def async_iter_locked_pcm_s16le(
     *,
     perf_monitor: Optional[Any] = None,
     log_prefix: str = "PCM stream",
+    inter_chunk_gap_sec: float = 0.03,
 ) -> AsyncIterator[bytes]:
     """
     Yield s16le mono PCM chunks (with inter-chunk gaps) under a single inference lock.
@@ -380,7 +381,7 @@ async def async_iter_locked_pcm_s16le(
         return
 
     inter_chunk_gap_bytes = np.zeros(
-        int(target_sample_rate * 0.03), dtype=np.int16
+        int(target_sample_rate * inter_chunk_gap_sec), dtype=np.int16
     ).tobytes()
     pcm_queue: queue.Queue = queue.Queue(maxsize=8)
     thread_exc: List[BaseException] = []
@@ -449,15 +450,19 @@ async def async_iter_locked_pcm_s16le(
             pcm_queue.put_nowait(None)
 
 
+async def async_iter_sse_audio_from_pcm(
+    pcm_stream: AsyncIterator[bytes],
+) -> AsyncIterator[bytes]:
+    async for pcm in pcm_stream:
+        b64 = base64.standard_b64encode(pcm).decode("ascii")
+        payload = json.dumps({"type": "speech.audio.delta", "audio": b64})
+        yield f"data: {payload}\n\n".encode("utf-8")
+    done = json.dumps({"type": "speech.audio.done"})
+    yield f"data: {done}\n\n".encode("utf-8")
+
+
 def _get_audio_media_type(output_format: str) -> str:
-    media_type_map = {
-        "mp3": "audio/mpeg",
-        # Streamed Opus is muxed as Ogg (ffmpeg -f ogg); browsers decode with audio/ogg.
-        "opus": "audio/ogg; codecs=opus",
-        "wav": "audio/wav",
-        "pcm": "application/octet-stream",
-    }
-    return media_type_map.get(output_format, f"audio/{output_format}")
+    return get_audio_media_type(output_format)
 
 
 def _get_ffmpeg_stream_command(
@@ -531,18 +536,16 @@ async def _stream_encoded_audio_from_pcm(
     output_format: str,
     sse: bool,
     log_prefix: str,
-    synthesize_chunk_sync: Optional[Callable[[str], Tuple[np.ndarray, int]]] = None,
     locked_synthesis: Optional[Dict[str, Any]] = None,
     perf_monitor: Optional[Any] = None,
+    timing_policy: Optional[CodecTimingPolicy] = None,
 ) -> AsyncIterator[bytes]:
     """
     Stream encoded audio via ffmpeg. Use ``locked_synthesis`` for multi-chunk requests
     so reference conditioning is not corrupted between chunks (single inference lock).
     """
-    if locked_synthesis is None and synthesize_chunk_sync is None:
-        raise ValueError(
-            f"{log_prefix}: provide locked_synthesis or synthesize_chunk_sync"
-        )
+    if locked_synthesis is None:
+        raise ValueError(f"{log_prefix}: provide locked_synthesis")
 
     ffmpeg_path = shutil.which("ffmpeg")
     if not ffmpeg_path:
@@ -566,17 +569,21 @@ async def _stream_encoded_audio_from_pcm(
 
     stderr_chunks: List[bytes] = []
     stream_chunk_size = 8192
-    inter_chunk_gap_bytes = np.zeros(
-        int(target_sample_rate * 0.03), dtype=np.int16
-    ).tobytes()
+    if timing_policy is None:
+        timing_policy = CodecTimingPolicy.for_request(
+            output_format=output_format,
+            stream_format=StreamFormat.SSE if sse else StreamFormat.AUDIO,
+            chunk_count=len(text_chunks),
+        )
     # libmp3lame may write zero bytes on stdout if total PCM is shorter than ~2.5s
     # at 24 kHz (even after stdin EOF). Pad with trailing silence so short lines work.
-    min_mp3_pcm_samples = int(target_sample_rate * 2.6)
+    min_mp3_pcm_samples = int(target_sample_rate * timing_policy.min_mp3_pcm_sec)
     # Some Ogg Opus streaming clients/bridges do not make the decoder ready until a few
     # pages have passed. Feed enough initial silence that any startup loss is silence.
-    min_streaming_opus_preroll_samples = int(target_sample_rate * 2.5)
+    min_streaming_opus_preroll_samples = int(
+        target_sample_rate * timing_policy.streaming_opus_preroll_sec
+    )
     writer_error: Optional[BaseException] = None
-    stop_event = threading.Event()
 
     async def _collect_stderr() -> None:
         while True:
@@ -590,13 +597,13 @@ async def _stream_encoded_audio_from_pcm(
         pcm_samples_written = 0
         stream_t0 = time.monotonic()
         first_pcm_logged = False
-        pcm_queue: Optional[queue.Queue] = None
         cancelled = False
         try:
             lead_pad_samples = 0
             if output_format in ("mp3", "opus"):
                 lead_pad_samples = utils.lossy_encode_leading_silence_sample_count(
-                    target_sample_rate
+                    target_sample_rate,
+                    timing_policy.leading_pad_sec,
                 )
                 if output_format == "opus":
                     lead_pad_samples = max(
@@ -607,101 +614,27 @@ async def _stream_encoded_audio_from_pcm(
                 await proc.stdin.drain()
                 pcm_samples_written += lead_pad_samples
 
-            if locked_synthesis is not None:
-                pcm_queue = queue.Queue(maxsize=4)
-                thread_exc: List[BaseException] = []
-
-                def _producer() -> None:
-                    try:
-                        n = len(text_chunks)
-                        speed = float(locked_synthesis.get("speed_factor", 1.0))
-                        for i, (audio_tensor, sr) in enumerate(
-                            engine.iter_synthesize_under_lock(
-                                text_chunks,
-                                locked_synthesis.get("audio_prompt_path"),
-                                float(locked_synthesis["temperature"]),
-                                float(locked_synthesis["exaggeration"]),
-                                float(locked_synthesis["cfg_weight"]),
-                                int(locked_synthesis["seed"]),
-                                str(locked_synthesis["language"]),
-                                perf_monitor=perf_monitor,
-                                log_prefix=f"{log_prefix} engine",
-                            )
-                        ):
-                            if stop_event.is_set():
-                                break
-                            if speed != 1.0:
-                                audio_tensor, sr = utils.apply_speed_factor(
-                                    audio_tensor, sr, speed
-                                )
-                            chunk_np = (
-                                audio_tensor.cpu().numpy().squeeze().astype(np.float32)
-                            )
-                            wave = _ensure_mono_waveform_1d(chunk_np)
-                            pcm = _float32_to_pcm_s16le_bytes(
-                                wave, sr, target_sample_rate
-                            )
-                            if not _queue_put_interruptible(
-                                pcm_queue, pcm, stop_event
-                            ):
-                                break
-                            if i < n - 1:
-                                if not _queue_put_interruptible(
-                                    pcm_queue, inter_chunk_gap_bytes, stop_event
-                                ):
-                                    break
-                        _queue_put_interruptible(pcm_queue, None, stop_event)
-                    except BaseException as exc:
-                        thread_exc.append(exc)
-                        _queue_put_interruptible(pcm_queue, None, stop_event)
-
-                threading.Thread(target=_producer, daemon=True).start()
-
-                while True:
-                    item = await asyncio.to_thread(pcm_queue.get)
-                    if item is None:
-                        if thread_exc:
-                            raise thread_exc[0]
-                        break
-                    if not first_pcm_logged and perf_monitor is not None:
-                        perf_monitor.record_duration(
-                            f"{log_prefix} streaming TTFB (first PCM ready)",
-                            time.monotonic() - stream_t0,
-                        )
-                        first_pcm_logged = True
-                    proc.stdin.write(item)
-                    await proc.stdin.drain()
-                    pcm_samples_written += len(item) // 2
-            else:
-                assert synthesize_chunk_sync is not None
-                for i, chunk_text in enumerate(text_chunks):
-                    wave, sr = await run_in_threadpool(
-                        synthesize_chunk_sync,
-                        chunk_text,
+            async for item in async_iter_locked_pcm_s16le(
+                text_chunks,
+                target_sample_rate,
+                locked_synthesis,
+                perf_monitor=perf_monitor,
+                log_prefix=f"{log_prefix} pcm",
+                inter_chunk_gap_sec=timing_policy.inter_chunk_gap_sec,
+            ):
+                if not first_pcm_logged and perf_monitor is not None:
+                    perf_monitor.record_duration(
+                        f"{log_prefix} streaming TTFB (first PCM ready)",
+                        time.monotonic() - stream_t0,
                     )
-                    pcm = _float32_to_pcm_s16le_bytes(wave, sr, target_sample_rate)
-                    if not first_pcm_logged and perf_monitor is not None:
-                        perf_monitor.record_duration(
-                            f"{log_prefix} streaming TTFB (first PCM ready)",
-                            time.monotonic() - stream_t0,
-                        )
-                        first_pcm_logged = True
-                    proc.stdin.write(pcm)
-                    await proc.stdin.drain()
-                    pcm_samples_written += len(pcm) // 2
-
-                    if i < len(text_chunks) - 1:
-                        proc.stdin.write(inter_chunk_gap_bytes)
-                        await proc.stdin.drain()
-                        pcm_samples_written += len(inter_chunk_gap_bytes) // 2
+                    first_pcm_logged = True
+                proc.stdin.write(item)
+                await proc.stdin.drain()
+                pcm_samples_written += len(item) // 2
 
             # Trailing PCM silence so libmp3lame / libopus finish the last frame(s) instead
             # of cutting off speech (common when stdin closes immediately after content).
-            trail_flush = 0
-            if output_format in ("mp3", "opus"):
-                trail_flush = int(
-                    target_sample_rate * utils.LOSSY_ENCODE_TRAILING_FLUSH_SEC
-                )
+            trail_flush = int(target_sample_rate * timing_policy.trailing_flush_sec)
             if trail_flush > 0:
                 proc.stdin.write(b"\x00\x00" * trail_flush)
                 await proc.stdin.drain()
@@ -719,9 +652,6 @@ async def _stream_encoded_audio_from_pcm(
             writer_error = exc
         finally:
             stop_event.set()
-            if pcm_queue is not None:
-                with suppress(queue.Full):
-                    pcm_queue.put_nowait(None)
             if not cancelled:
                 with suppress(Exception):
                     proc.stdin.close()
@@ -784,7 +714,6 @@ async def _stream_encoded_audio_from_pcm(
             yield f"data: {done_payload}\n\n".encode("utf-8")
 
     finally:
-        stop_event.set()
         if not writer_task.done():
             writer_task.cancel()
             with suppress(asyncio.CancelledError, Exception):

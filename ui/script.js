@@ -38,8 +38,9 @@ document.addEventListener('DOMContentLoaded', async function () {
     const API_BASE_URL = IS_LOCAL_FILE ? 'http://localhost:8004' : '';
 
     const DEBOUNCE_DELAY_MS = 750;
-    const STREAM_APPEND_MIN_BYTES = 128 * 1024;
-    const STREAM_START_MIN_BYTES = 256 * 1024;
+    // UI buffering preferences only. Server codec policy is responsible for audio correctness.
+    const MSE_APPEND_MIN_BYTES = 128 * 1024;
+    const MSE_STARTUP_BUFFER_MIN_BYTES = 256 * 1024;
 
     // Language options by model type
     const LANGUAGES_MULTILINGUAL = [
@@ -1537,13 +1538,13 @@ document.addEventListener('DOMContentLoaded', async function () {
                             const fb = firstByteMs != null ? firstByteMs : '--';
                             const fa = firstAppendMs != null ? firstAppendMs : '--';
                             const bufferingForStart = !playbackStarted
-                                ? ` · startup buffer ${Math.min(100, Math.round((totalBytes / STREAM_START_MIN_BYTES) * 100))}%`
+                                ? ` · startup buffer ${Math.min(100, Math.round((totalBytes / MSE_STARTUP_BUFFER_MIN_BYTES) * 100))}%`
                                 : '';
                             loadingStatusText.textContent =
                                 `Streaming… ${(totalBytes / 1024).toFixed(1)} KB — ` +
                                 `net ${fb} ms · append ${fa} ms${bufferingForStart}`;
                         }
-                        if (pendingAppendBytes < STREAM_APPEND_MIN_BYTES) {
+                        if (pendingAppendBytes < MSE_APPEND_MIN_BYTES) {
                             continue;
                         }
                         const appendData = concatUint8Arrays(pendingAppendChunks, pendingAppendBytes);
@@ -1618,7 +1619,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                         }
                         if (
                             !playbackStarted
-                            && totalBytes >= STREAM_START_MIN_BYTES
+                            && totalBytes >= MSE_STARTUP_BUFFER_MIN_BYTES
                         ) {
                             playbackStarted = true;
                             hideLoadingOverlay();

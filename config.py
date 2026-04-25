@@ -133,6 +133,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "sample_rate": 24000,  # Sample rate of the output audio in Hz.
         "max_reference_duration_sec": 30,  # Maximum duration for reference audio files.
         "save_to_disk": False,  # If true, save generated audio files to disk in outputs folder.
+        "codec_timing": {
+            # Guard silence for short lossy outputs. Kept small to avoid audible startup delay.
+            "lossy_short_leading_pad_sec": 0.35,
+            # Guard silence for multi-chunk lossy outputs where encoder/client startup loss is more visible.
+            "lossy_multichunk_leading_pad_sec": 2.50,
+            # Flush silence appended before closing lossy encoders.
+            "lossy_trailing_flush_sec": 0.10,
+            # Additional Opus preroll for multi-chunk compressed streaming.
+            "streaming_opus_preroll_sec": 2.50,
+            # Minimum PCM fed to libmp3lame in compressed streaming.
+            "streaming_mp3_min_pcm_sec": 2.60,
+            # PCM silence between independently generated streaming chunks.
+            "streaming_inter_chunk_gap_sec": 0.03,
+        },
     },
     "ui_state": {  # Stores user interface preferences and last-used values.
         "last_text": "",  # Last text entered by the user.

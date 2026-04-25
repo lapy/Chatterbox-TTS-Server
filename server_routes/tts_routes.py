@@ -1,6 +1,5 @@
 """Custom POST /tts route."""
 import io
-import asyncio
 import logging
 import shutil
 import time
@@ -8,23 +7,17 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-import torch
-
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 import engine
 import utils
-from audio_pipeline import (
-    _finalize_stitched_tts_audio,
-    _get_audio_media_type,
-    _stream_encoded_audio_from_pcm,
-)
+from audio_output import AudioOutputPolicy, EndpointKind, StreamFormat, streaming_headers
+from audio_pipeline import _stream_encoded_audio_from_pcm
 from config import (
     config_manager,
     get_audio_output_format,
     get_audio_sample_rate,
-    get_output_path,
     get_predefined_voices_path,
     get_reference_audio_path,
 )
@@ -33,7 +26,12 @@ from tts_concurrency import limit_tts_concurrency, limit_tts_concurrency_stream
 from tts_orchestration import (
     build_text_chunks,
     resolve_synthesis_params_custom,
-    synthesize_text_chunks_async,
+)
+from tts_pipeline import (
+    GenerationRequestContext,
+    build_locked_synthesis_payload,
+    disconnected_check,
+    synthesize_buffered_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,10 +99,9 @@ async def custom_tts_endpoint(
     )
     logger.debug(f"Input text (first 100 chars): '{request.text[:100]}...'")
 
-    async def raise_if_disconnected() -> None:
-        if await http_request.is_disconnected():
-            logger.info("/tts client disconnected; stopping non-streaming generation.")
-            raise asyncio.CancelledError()
+    cancellation_check = disconnected_check(
+        http_request, "/tts client disconnected; stopping non-streaming generation."
+    )
 
     audio_prompt_path_for_engine: Optional[Path] = None
     if request.voice_mode == "predefined":
@@ -173,6 +170,16 @@ async def custom_tts_endpoint(
     output_format_str = (
         request.output_format if request.output_format else get_audio_output_format()
     )
+    timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+    param_tag = (
+        f"T{params.temperature:.1f}_E{params.exaggeration:.1f}_W{params.cfg_weight:.1f}".replace(
+            ".", ""
+        )
+    )
+    suggested_filename_base = f"tts_output_{param_tag}_{timestamp_str}"
+    download_filename = utils.sanitize_filename(
+        f"{suggested_filename_base}.{output_format_str}"
+    )
 
     if request.stream:
         if output_format_str not in ("opus", "mp3"):
@@ -185,26 +192,24 @@ async def custom_tts_endpoint(
                 status_code=503,
                 detail="ffmpeg is required for streaming opus/mp3 output.",
             )
-        path_for_synth = (
-            str(audio_prompt_path_for_engine)
-            if audio_prompt_path_for_engine
-            else None
+        output_policy = AudioOutputPolicy(
+            output_format=output_format_str,
+            target_sample_rate=final_output_sample_rate,
+            chunk_count=len(text_chunks),
+            stream_format=StreamFormat.AUDIO,
         )
-        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-        param_tag = (
-            f"T{params.temperature:.1f}_E{params.exaggeration:.1f}_W{params.cfg_weight:.1f}".replace(
-                ".", ""
-            )
+        ctx = GenerationRequestContext(
+            endpoint=EndpointKind.CUSTOM,
+            text_chunks=text_chunks,
+            audio_prompt_path=audio_prompt_path_for_engine,
+            params=params,
+            output_policy=output_policy,
+            perf_monitor=perf_monitor,
+            log_prefix="/tts stream",
+            cancellation_check=cancellation_check,
+            download_filename=download_filename,
         )
-        suggested_filename_base = f"tts_output_{param_tag}_{timestamp_str}"
-        download_filename = utils.sanitize_filename(
-            f"{suggested_filename_base}.{output_format_str}"
-        )
-        headers = {
-            "Content-Disposition": f'attachment; filename="{download_filename}"',
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        }
+        headers = streaming_headers(output_policy, download_filename=download_filename)
         logger.info(
             f"Streaming /tts ({output_format_str}), {len(text_chunks)} text chunk(s)."
         )
@@ -214,144 +219,48 @@ async def custom_tts_endpoint(
             output_format=output_format_str,
             sse=False,
             log_prefix="/tts stream",
-            locked_synthesis={
-                "audio_prompt_path": path_for_synth,
-                "temperature": params.temperature,
-                "exaggeration": params.exaggeration,
-                "cfg_weight": params.cfg_weight,
-                "seed": params.seed,
-                "language": params.language,
-                "speed_factor": params.speed_factor,
-            },
+            locked_synthesis=build_locked_synthesis_payload(ctx),
             perf_monitor=perf_monitor,
+            timing_policy=output_policy.timing,
         )
         return StreamingResponse(
             limit_tts_concurrency_stream(stream_iter),
-            media_type=_get_audio_media_type(output_format_str),
+            media_type=output_policy.media_type,
             headers=headers,
         )
 
-    path_for_synth = (
-        str(audio_prompt_path_for_engine) if audio_prompt_path_for_engine else None
-    )
-    try:
-        all_audio_segments_np, engine_output_sample_rate = (
-            await synthesize_text_chunks_async(
-                text_chunks,
-                path_for_synth,
-                params,
-                perf_monitor=perf_monitor,
-                log_prefix="/tts",
-                cancellation_check=raise_if_disconnected,
-            )
-        )
-    except RuntimeError as e:
-        logger.error(str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error during TTS synthesis: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-    if not all_audio_segments_np:
-        logger.error("No audio segments were successfully generated.")
-        raise HTTPException(
-            status_code=500, detail="Audio generation resulted in no output."
-        )
-
-    try:
-        await raise_if_disconnected()
-        final_audio_np = _finalize_stitched_tts_audio(
-            all_audio_segments_np,
-            engine_output_sample_rate,
-            perf_monitor=perf_monitor,
-            log_prefix="/tts",
-        )
-
-        if params.speed_factor != 1.0:
-            sped_t = torch.from_numpy(
-                final_audio_np.astype(np.float32, copy=False)
-            )
-            sped_t, engine_output_sample_rate = utils.apply_speed_factor(
-                sped_t, engine_output_sample_rate, params.speed_factor
-            )
-            final_audio_np = sped_t.cpu().numpy().squeeze().astype(np.float32)
-            perf_monitor.record("/tts speed_factor applied (post-stitch)")
-        await raise_if_disconnected()
-
-    except ValueError as e_concat:
-        logger.error(f"Audio concatenation/stitching failed: {e_concat}", exc_info=True)
-        for idx, seg in enumerate(all_audio_segments_np):
-            logger.error(f"Segment {idx} shape: {seg.shape}, dtype: {seg.dtype}")
-        raise HTTPException(
-            status_code=500, detail=f"Audio stitching error: {e_concat}"
-        )
-
-    await raise_if_disconnected()
-    encoded_audio_bytes = utils.encode_audio(
-        audio_array=final_audio_np,
-        sample_rate=engine_output_sample_rate,
+    output_policy = AudioOutputPolicy(
         output_format=output_format_str,
         target_sample_rate=final_output_sample_rate,
+        chunk_count=len(text_chunks),
+        stream_format=StreamFormat.NONE,
     )
-    perf_monitor.record(
-        f"Final audio encoded to {output_format_str} (target SR: {final_output_sample_rate}Hz from engine SR: {engine_output_sample_rate}Hz)"
+    ctx = GenerationRequestContext(
+        endpoint=EndpointKind.CUSTOM,
+        text_chunks=text_chunks,
+        audio_prompt_path=audio_prompt_path_for_engine,
+        params=params,
+        output_policy=output_policy,
+        perf_monitor=perf_monitor,
+        log_prefix="/tts",
+        cancellation_check=cancellation_check,
+        download_filename=download_filename,
     )
-
-    if encoded_audio_bytes is None or len(encoded_audio_bytes) < 100:
-        logger.error(
-            f"Failed to encode final audio to format: {output_format_str} or output is too small ({len(encoded_audio_bytes or b'')} bytes)."
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to encode audio to {output_format_str} or generated invalid audio.",
-        )
-
-    media_type = _get_audio_media_type(output_format_str)
-    timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-    # Include generation parameters in filename for easy comparison across presets
-    param_tag = (
-        f"T{params.temperature:.1f}_E{params.exaggeration:.1f}_W{params.cfg_weight:.1f}".replace(
-            ".", ""
-        )
-    )
-    suggested_filename_base = f"tts_output_{param_tag}_{timestamp_str}"
-    download_filename = utils.sanitize_filename(
-        f"{suggested_filename_base}.{output_format_str}"
-    )
-    headers = {"Content-Disposition": f'attachment; filename="{download_filename}"'}
+    try:
+        result = await synthesize_buffered_response(ctx)
+    except Exception as e:
+        logger.error(f"Error during TTS generation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
     logger.info(
-        f"Successfully generated audio: {download_filename}, {len(encoded_audio_bytes)} bytes, type {media_type}."
+        "Successfully generated audio: %s, %s bytes, type %s.",
+        download_filename,
+        len(result.encoded.data),
+        result.encoded.media_type,
     )
-    if perf_monitor.enabled:
-        logger.info(perf_monitor.report(log_level=logging.INFO))
-
-    # Optional: Save to disk if enabled
-    if config_manager.get_bool("audio_output.save_to_disk", False):
-        await raise_if_disconnected()
-        output_dir = get_output_path(ensure_absolute=True)
-        output_file_path = output_dir / download_filename
-        try:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            with open(output_file_path, "wb") as f:
-                f.write(encoded_audio_bytes)
-            if not output_file_path.exists() or output_file_path.stat().st_size < 100:
-                logger.error(f"File save verification failed for {output_file_path}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to save audio file to {output_file_path}",
-                )
-            logger.info(f"Audio saved to disk: {output_file_path}")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(
-                f"Failed to save audio to {output_file_path}: {e}", exc_info=True
-            )
-            raise HTTPException(
-                status_code=500, detail=f"Failed to save audio file: {e}"
-            )
 
     return StreamingResponse(
-        io.BytesIO(encoded_audio_bytes), media_type=media_type, headers=headers
+        io.BytesIO(result.encoded.data),
+        media_type=result.encoded.media_type,
+        headers=result.headers,
     )

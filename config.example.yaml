@@ -65,6 +65,13 @@ audio_output:
   sample_rate: 24000
   max_reference_duration_sec: 30
   save_to_disk: false
+  codec_timing:
+    lossy_short_leading_pad_sec: 0.35
+    lossy_multichunk_leading_pad_sec: 2.50
+    lossy_trailing_flush_sec: 0.10
+    streaming_opus_preroll_sec: 2.50
+    streaming_mp3_min_pcm_sec: 2.60
+    streaming_inter_chunk_gap_sec: 0.03
 
 ui_state:
   last_text: ""

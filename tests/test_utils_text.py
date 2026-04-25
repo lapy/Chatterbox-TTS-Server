@@ -67,6 +67,19 @@ def test_normalize_markdown_for_tts_handles_unicode_math_arrows():
     assert normalized == "A  to  B and success  implies  deploy."
 
 
+def test_lossy_leading_silence_can_use_short_profile():
+    sr = 24000
+
+    short_count = utils.lossy_encode_leading_silence_sample_count(
+        sr, utils.LOSSY_ENCODE_SHORT_LEADING_PAD_SEC
+    )
+    default_count = utils.lossy_encode_leading_silence_sample_count(sr)
+
+    assert short_count == int(sr * utils.LOSSY_ENCODE_SHORT_LEADING_PAD_SEC)
+    assert default_count == int(sr * utils.LOSSY_ENCODE_LEADING_PAD_SEC)
+    assert short_count < default_count
+
+
 def test_chunk_text_markdown_preserves_opening_sentence_start():
     text = (
         "This is a heavy blow, especially on a day when your emotional reserves are already low. "

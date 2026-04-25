@@ -219,9 +219,10 @@ This server application enhances the underlying `chatterbox-tts` engine with the
 *   **Performance & Configuration:**
     *   💻 **GPU Acceleration:** Automatically uses NVIDIA CUDA, Apple MPS, or AMD ROCm if available, falls back to CPU.
     *   ⏱️ **Latency profiling:** Enable `server.enable_performance_monitor` for per-request / per-chunk logs (including `prepare_conditionals` vs `model_generate` and **first encoded byte** for ffmpeg streaming). Use `server.performance_cuda_sync` only when profiling CUDA (adds overhead). Chunked synthesis reuses voice embeddings under one inference lock; set `tts_engine.chunk_batch_size: 0` to minimize Python batching overhead.
-    *   **Parallel chunks:** `tts_engine.parallel_chunk_workers` (default `1`) runs multiple chunk `generate` calls in a thread pool while the whole request holds the inference lock (other API calls wait). Values `>1` re-run reference conditioning per chunk (like [Chatterbox-TTS-Extended](https://github.com/petermg/Chatterbox-TTS-Extended)) and may stress GPU drivers; use `1` if you see instability. Streaming still synthesizes sequentially under one lock.
-    *   **Concurrency & processes:** The server uses **one** loaded model and `uvicorn` with **`workers: 1`** (see `server.py`). A global inference lock in `engine.py` still serializes model access when multiple clients connect; for heavy multi-user use, set **`server.max_concurrent_tts_requests`** (e.g. `1` or `2`) to queue extra `/tts` and `/v1/audio/speech` work at the HTTP layer, or add limits in a reverse proxy. True parallel inference to multiple users requires multiple processes/GPUs, not a single lock.
-    *   **Web UI streaming:** The UI plays streamed MP3 with **MediaSource** when available (low time-to-playback). If MSE is unsupported or an append fails, it falls back to buffering the full response (same as older builds). The browser devtools console logs `[TTS stream]` first-byte / first-playback timing for comparison with server logs.
+    *   **Parallel chunks:** `tts_engine.parallel_chunk_workers` (default `1`) runs multiple chunk `generate` calls in a thread pool while the whole request holds the inference lock (other API calls wait). Values `>1` re-run reference conditioning per chunk (like [Chatterbox-TTS-Extended](https://github.com/petermg/Chatterbox-TTS-Extended)) and may stress GPU drivers; use `1` if you see instability. Streaming synthesizes sequentially under one lock through the shared PCM stream controller.
+    *   **Concurrency & processes:** The server uses **one** loaded model and `uvicorn` with **`workers: 1`** (see `server.py`). A global inference lock in `engine.py` still serializes model access when multiple clients connect; for heavy multi-user use, set **`server.max_concurrent_tts_requests`** (e.g. `1` or `2`) to queue extra `/tts` and `/v1/audio/speech` work at the HTTP layer. Buffered and streaming requests hold the admission slot until the work or stream completes.
+    *   **Codec timing policy:** MP3/Opus priming, trailing flush silence, streaming Opus preroll, MP3 minimum PCM duration, and streaming inter-chunk gap are centralized under `audio_output.codec_timing`. Routes no longer decide lossy padding from chunk count directly; they build an `AudioOutputPolicy` and the encoder/stream controller applies the policy.
+    *   **Web UI streaming:** The UI plays streamed MP3 with **MediaSource** when available (low time-to-playback). If MSE is unsupported or an append fails, it falls back to buffering the full response (same as older builds). Browser-side MSE thresholds are only playback buffering preferences; server codec policy owns audio correctness. Opus MSE support is browser-dependent, so MP3 is the safest progressive UI format.
     *   **Chunk quality retries:** `tts_engine.chunk_quality_max_retries` (default `0`) enables post-synthesis checks and re-synthesis via `engine.synthesize` with a derived seed. **Heuristics** live in `utils.detect_chunk_audio_glitch`. Optional **ASR** (`asr.*`): set `asr.enabled: true`, `asr.openai_compatible_base_url` (include `/v1`), and `asr.access_token`, or pass the token only via env `CHATTERBOX_ASR_ACCESS_TOKEN` (not written into config on load). Optional env `CHATTERBOX_ASR_OPENAI_BASE_URL` overrides the base URL. Tune `asr.min_similarity` (fuzzy match vs. reference chunk text).
     *   📊 **Benchmark script:** `python scripts/benchmark_cuda_latency.py` (requires `httpx`) hits `/tts` and `/v1/audio/speech` with short/long texts; set `CHATTERBOX_BENCH_BASE` and `CHATTERBOX_BENCH_VOICE` as needed.
     *   ⚙️ All configuration via `config.yaml`.
@@ -724,12 +725,23 @@ The server relies exclusively on `config.yaml` for runtime configuration.
 *   `tts_engine`: `device` ('auto', 'cuda', 'mps', 'cpu'), `predefined_voices_path`, `reference_audio_path`, `default_voice_id`.
 *   `paths`: `model_cache` (for `download_model.py`), `output`.
 *   `generation_defaults`: Default UI values for `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`.
-*   `audio_output`: `format`, `sample_rate`, `max_reference_duration_sec`.
+*   `audio_output`: `format`, `sample_rate`, `max_reference_duration_sec`, `save_to_disk`, and `codec_timing` for named MP3/Opus priming, flush, and streaming gap policy.
 *   `ui_state`: Stores the last used text, voice mode, file selections, etc., for UI persistence.
 *   `ui`: `title`, `show_language_select`, `max_predefined_voices_in_dropdown`.
 *   `debug`: `save_intermediate_audio`.
 
 ⭐ **Remember:** Changes made to `server`, `model`, `tts_engine`, or `paths` sections in `config.yaml` (or via the UI's Server Configuration section) **require a server restart** to take effect. Changes to `generation_defaults` or `ui_state` are applied dynamically or on the next page load.
+
+### Generation Pipeline Architecture
+
+`/tts` and `/v1/audio/speech` now share the same internal generation path after request parsing:
+
+1. Routes validate public request fields, resolve the voice file, split/normalize text, and build a `GenerationRequestContext`.
+2. `tts_pipeline.py` owns buffered synthesis: chunk generation, cancellation checks, stitching/post-processing, speed adjustment, encoding, optional save-to-disk, and response metadata.
+3. `audio_output.py` owns `AudioOutputPolicy` and codec timing decisions for WAV, PCM, MP3, and Opus across buffered and streaming modes.
+4. `audio_pipeline.py` owns streaming controllers: one locked PCM iterator feeds raw PCM, SSE PCM, and ffmpeg-backed MP3/Opus streams.
+
+Public endpoint behavior remains stable: `/tts` keeps its attachment filename, OpenAI-compatible buffered responses remain header-light, and streaming responses keep `Cache-Control: no-cache`, `X-Accel-Buffering: no`, `X-Sample-Rate` for PCM, and compressed stream codec/container headers.
 
 ## ▶️ Running the Server
 
@@ -1257,7 +1269,7 @@ lspci | grep VGA
 *   **UI Issues / Settings Not Saving:** Clear browser cache/local storage. Check browser developer console (F12) for JavaScript errors. Ensure `config.yaml` is writable by the server process.
 *   **Port Conflict (`Address already in use`):** Another process is using the port. Stop it or change `server.port` in `config.yaml` (requires server restart).
     - Find process using port: `netstat -ano | findstr :8004` (Windows) or `lsof -i :8004` (Linux)
-*   **Generation Cancel Button:** This is a "UI Cancel" - it stops the *frontend* from waiting but doesn't instantly halt ongoing backend model inference. Clicking Generate again cancels the previous UI wait.
+*   **Generation Cancel Button:** The UI aborts the request and the backend cooperatively stops at cancellation points. A model inference already inside the engine lock may finish its current chunk before cleanup completes.
 
 ### Selecting GPUs on Multi-GPU Systems
 

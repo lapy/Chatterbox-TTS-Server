@@ -1,29 +1,23 @@
 """OpenAI-compatible speech API routes."""
-import asyncio
-import base64
 import io
-import json
 import logging
 import shutil
 import time
 import uuid
-import numpy as np
-import torch
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 import engine
 import utils
+from audio_output import AudioOutputPolicy, EndpointKind, StreamFormat, streaming_headers
 from audio_pipeline import (
-    _finalize_stitched_tts_audio,
-    _get_audio_media_type,
     _stream_encoded_audio_from_pcm,
+    async_iter_sse_audio_from_pcm,
     async_iter_locked_pcm_s16le,
 )
 from config import (
     config_manager,
     get_audio_sample_rate,
-    get_output_path,
     get_predefined_voices_path,
     get_reference_audio_path,
 )
@@ -32,7 +26,12 @@ from tts_concurrency import limit_tts_concurrency, limit_tts_concurrency_stream
 from tts_orchestration import (
     build_text_chunks,
     resolve_synthesis_params_openai,
-    synthesize_text_chunks_async,
+)
+from tts_pipeline import (
+    GenerationRequestContext,
+    build_locked_synthesis_payload,
+    disconnected_check,
+    synthesize_buffered_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,50 +149,45 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Req
         )
 
         target_pcm_sr = get_audio_sample_rate()
-        stream_headers = {
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        }
-        if request.response_format == "pcm":
-            stream_headers["X-Sample-Rate"] = str(target_pcm_sr)
-        elif request.response_format == "opus":
-            stream_headers["X-Stream-Audio-Codec"] = "opus"
-            stream_headers["X-Stream-Container"] = "ogg"
-        elif request.response_format == "mp3":
-            stream_headers["X-Stream-Audio-Codec"] = "mp3"
-            stream_headers["X-Stream-Container"] = "mp3"
-
-        locked = {
-            "audio_prompt_path": str(audio_prompt_path),
-            "temperature": params.temperature,
-            "exaggeration": params.exaggeration,
-            "cfg_weight": params.cfg_weight,
-            "seed": params.seed,
-            "language": params.language,
-            "speed_factor": params.speed_factor,
-        }
-
-        async def raise_if_disconnected() -> None:
-            if await http_request.is_disconnected():
-                logger.info(
-                    "OpenAI speech client disconnected; stopping non-streaming generation."
-                )
-                raise asyncio.CancelledError()
+        stream_format = (
+            StreamFormat(effective_stream_format)
+            if effective_stream_format is not None
+            else StreamFormat.NONE
+        )
+        output_policy = AudioOutputPolicy(
+            output_format=request.response_format,
+            target_sample_rate=target_pcm_sr,
+            chunk_count=len(text_chunks),
+            stream_format=stream_format,
+        )
+        cancellation_check = disconnected_check(
+            http_request,
+            "OpenAI speech client disconnected; stopping non-streaming generation.",
+        )
+        ctx = GenerationRequestContext(
+            endpoint=EndpointKind.OPENAI,
+            text_chunks=text_chunks,
+            audio_prompt_path=audio_prompt_path,
+            params=params,
+            output_policy=output_policy,
+            perf_monitor=perf_monitor,
+            log_prefix="OpenAI speech",
+            cancellation_check=cancellation_check,
+            save_filename=f"openai_tts_{time.strftime('%Y%m%d_%H%M%S')}.{request.response_format}",
+        )
+        stream_headers = streaming_headers(output_policy)
+        locked = build_locked_synthesis_payload(ctx)
 
         if effective_stream_format == "audio":
-
-            async def raw_audio_stream():
-                async for pcm in async_iter_locked_pcm_s16le(
+            if request.response_format == "pcm":
+                stream_iter = async_iter_locked_pcm_s16le(
                     text_chunks,
                     target_pcm_sr,
                     locked,
                     perf_monitor=perf_monitor,
                     log_prefix="OpenAI speech pcm",
-                ):
-                    yield pcm
-
-            if request.response_format == "pcm":
-                stream_iter = raw_audio_stream()
+                    inter_chunk_gap_sec=output_policy.timing.inter_chunk_gap_sec,
+                )
             else:
                 stream_iter = _stream_encoded_audio_from_pcm(
                     text_chunks=text_chunks,
@@ -203,31 +197,25 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Req
                     log_prefix="OpenAI speech",
                     locked_synthesis=locked,
                     perf_monitor=perf_monitor,
+                    timing_policy=output_policy.timing,
                 )
             return StreamingResponse(
                 limit_tts_concurrency_stream(stream_iter),
-                media_type=_get_audio_media_type(request.response_format),
+                media_type=output_policy.media_type,
                 headers=stream_headers,
             )
 
         if effective_stream_format == "sse":
-
-            async def sse_audio_stream():
-                async for pcm in async_iter_locked_pcm_s16le(
+            if request.response_format == "pcm":
+                pcm_iter = async_iter_locked_pcm_s16le(
                     text_chunks,
                     target_pcm_sr,
                     locked,
                     perf_monitor=perf_monitor,
                     log_prefix="OpenAI speech sse pcm",
-                ):
-                    b64 = base64.standard_b64encode(pcm).decode("ascii")
-                    payload = json.dumps({"type": "speech.audio.delta", "audio": b64})
-                    yield f"data: {payload}\n\n".encode("utf-8")
-                done = json.dumps({"type": "speech.audio.done"})
-                yield f"data: {done}\n\n".encode("utf-8")
-
-            if request.response_format == "pcm":
-                stream_iter = sse_audio_stream()
+                    inter_chunk_gap_sec=output_policy.timing.inter_chunk_gap_sec,
+                )
+                stream_iter = async_iter_sse_audio_from_pcm(pcm_iter)
             else:
                 stream_iter = _stream_encoded_audio_from_pcm(
                     text_chunks=text_chunks,
@@ -237,96 +225,19 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Req
                     log_prefix="OpenAI speech",
                     locked_synthesis=locked,
                     perf_monitor=perf_monitor,
+                    timing_policy=output_policy.timing,
                 )
 
             return StreamingResponse(
                 limit_tts_concurrency_stream(stream_iter),
-                media_type="text/event-stream",
+                media_type=output_policy.media_type,
                 headers=stream_headers,
             )
 
-        all_audio_segments_np, engine_sr = await synthesize_text_chunks_async(
-            text_chunks,
-            str(audio_prompt_path),
-            params,
-            perf_monitor=perf_monitor,
-            log_prefix="OpenAI speech",
-            cancellation_check=raise_if_disconnected,
+        result = await synthesize_buffered_response(ctx)
+        return StreamingResponse(
+            io.BytesIO(result.encoded.data), media_type=result.encoded.media_type
         )
-
-        await raise_if_disconnected()
-        final_audio_np = _finalize_stitched_tts_audio(
-            all_audio_segments_np,
-            engine_sr,
-            perf_monitor=perf_monitor,
-            log_prefix="OpenAI speech",
-        )
-
-        if params.speed_factor != 1.0:
-            sped_t = torch.from_numpy(
-                final_audio_np.astype(np.float32, copy=False)
-            )
-            sped_t, engine_sr = utils.apply_speed_factor(
-                sped_t, engine_sr, params.speed_factor
-            )
-            final_audio_np = sped_t.cpu().numpy().squeeze().astype(np.float32)
-            perf_monitor.record("OpenAI speech speed_factor applied (post-stitch)")
-
-        await raise_if_disconnected()
-        encoded_audio = utils.encode_audio(
-            audio_array=final_audio_np,
-            sample_rate=engine_sr,
-            output_format=request.response_format,
-            target_sample_rate=get_audio_sample_rate(),
-        )
-
-        if encoded_audio is None:
-            raise HTTPException(status_code=500, detail="Failed to encode audio.")
-
-        perf_monitor.record(
-            f"OpenAI speech encoded ({request.response_format}) "
-            f"{len(encoded_audio)} bytes"
-        )
-        if perf_monitor.enabled:
-            logger.info(perf_monitor.report(log_level=logging.INFO))
-
-        media_type = _get_audio_media_type(request.response_format)
-
-        if config_manager.get_bool("audio_output.save_to_disk", False):
-            await raise_if_disconnected()
-            output_dir = get_output_path(ensure_absolute=True)
-            timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-            download_filename = f"openai_tts_{timestamp_str}.{request.response_format}"
-            output_file_path = output_dir / download_filename
-            try:
-                output_dir.mkdir(parents=True, exist_ok=True)
-                with open(output_file_path, "wb") as f:
-                    f.write(encoded_audio)
-                if (
-                    not output_file_path.exists()
-                    or output_file_path.stat().st_size < 100
-                ):
-                    logger.error(
-                        f"File save verification failed for {output_file_path}"
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to save audio file to {output_file_path}",
-                    )
-                logger.info(
-                    f"OpenAI-compatible audio saved to disk: {output_file_path}"
-                )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(
-                    f"Failed to save audio to {output_file_path}: {e}", exc_info=True
-                )
-                raise HTTPException(
-                    status_code=500, detail=f"Failed to save audio file: {e}"
-                )
-
-        return StreamingResponse(io.BytesIO(encoded_audio), media_type=media_type)
 
     except HTTPException:
         raise

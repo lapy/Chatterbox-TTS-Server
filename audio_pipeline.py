@@ -562,9 +562,8 @@ async def _stream_encoded_audio_from_pcm(
         try:
             lead_pad_samples = 0
             if output_format in ("mp3", "opus"):
-                lead_pad_samples = max(
-                    int(target_sample_rate * utils.LOSSY_ENCODE_LEADING_PAD_SEC),
-                    int(1600 * target_sample_rate // 44100),
+                lead_pad_samples = utils.lossy_encode_leading_silence_sample_count(
+                    target_sample_rate
                 )
             if lead_pad_samples > 0:
                 proc.stdin.write(b"\x00\x00" * lead_pad_samples)
@@ -681,11 +680,26 @@ async def _stream_encoded_audio_from_pcm(
     stderr_task = asyncio.create_task(_collect_stderr())
     writer_task = asyncio.create_task(_writer())
 
+    stream_out_t0 = time.monotonic()
+    first_encoded_byte = True
     try:
         while True:
             stdout_chunk = await proc.stdout.read(stream_chunk_size)
             if not stdout_chunk:
                 break
+
+            if first_encoded_byte and stdout_chunk:
+                first_encoded_byte = False
+                tfb = time.monotonic() - stream_out_t0
+                if perf_monitor is not None and getattr(perf_monitor, "enabled", False):
+                    perf_monitor.record_duration(
+                        f"{log_prefix} streaming TTFB (first encoded byte)", tfb
+                    )
+                logger.info(
+                    "%s: first encoded audio byte(s) on wire after %.3fs (ffmpeg stdout)",
+                    log_prefix,
+                    tfb,
+                )
 
             if sse:
                 payload = json.dumps(

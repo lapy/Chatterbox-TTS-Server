@@ -10,6 +10,10 @@ document.addEventListener('DOMContentLoaded', async function () {
     let activeTtsAbortController = null;
     let wavesurfer = null;
     let currentAudioBlobUrl = null;
+    /** Object URL for the download blob built after a live stream completes (separate from `currentAudioBlobUrl` when using MSE). */
+    let currentStreamDownloadObjectUrl = null;
+    let currentStreamMediaSource = null;
+    let loadingOverlayVisible = false;
     let saveStateTimeout = null;
     let currentPresetName = null;
 
@@ -1151,6 +1155,64 @@ document.addEventListener('DOMContentLoaded', async function () {
         setTimeout(() => audioPlayerContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 150);
     }
 
+    function teardownStreamPlayerResources() {
+        if (currentStreamMediaSource) {
+            try {
+                if (currentStreamMediaSource.readyState === 'open') {
+                    currentStreamMediaSource.endOfStream();
+                }
+            } catch (e) { /* ignore */ }
+            currentStreamMediaSource = null;
+        }
+        if (currentStreamDownloadObjectUrl) {
+            try { URL.revokeObjectURL(currentStreamDownloadObjectUrl); } catch (e) { /* ignore */ }
+            currentStreamDownloadObjectUrl = null;
+        }
+    }
+
+    /**
+     * MIME for MediaSource.appendBuffer. MP3 is widely supported; Opus-in-Ogg via MSE is browser-dependent.
+     */
+    function getMseMimeTypeForTtsOutput(outputFormat) {
+        if (typeof window.MediaSource === 'undefined') return null;
+        const candidates = outputFormat === 'opus'
+            ? ['audio/ogg; codecs="opus"', 'audio/ogg;codecs=opus', 'audio/ogg']
+            : ['audio/mpeg', 'audio/mpeg; codecs="mp3"', 'audio/mp3; codecs="mp3"'];
+        for (const c of candidates) {
+            if (window.MediaSource.isTypeSupported(c)) return c;
+        }
+        return null;
+    }
+
+    function waitSourceBufferNotUpdating(sourceBuffer) {
+        if (!sourceBuffer.updating) return Promise.resolve();
+        return new Promise((resolve) => {
+            sourceBuffer.addEventListener('updateend', () => resolve(), { once: true });
+        });
+    }
+
+    function appendBufferAsync(sourceBuffer, data) {
+        return new Promise((resolve, reject) => {
+            const onError = () => {
+                sourceBuffer.removeEventListener('updateend', onEnd);
+                reject(sourceBuffer.error || new Error('SourceBuffer error'));
+            };
+            const onEnd = () => {
+                sourceBuffer.removeEventListener('error', onError);
+                resolve();
+            };
+            sourceBuffer.addEventListener('updateend', onEnd, { once: true });
+            sourceBuffer.addEventListener('error', onError, { once: true });
+            try {
+                sourceBuffer.appendBuffer(data);
+            } catch (e) {
+                sourceBuffer.removeEventListener('updateend', onEnd);
+                sourceBuffer.removeEventListener('error', onError);
+                reject(e);
+            }
+        });
+    }
+
     /**
      * Streamed MP3/Opus uses the native audio element so playback matches the streamed container
      * (Ogg Opus vs WaveSurfer/Web Audio blob decoding).
@@ -1161,6 +1223,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             wavesurfer.destroy();
             wavesurfer = null;
         }
+        teardownStreamPlayerResources();
         if (currentAudioBlobUrl) {
             URL.revokeObjectURL(currentAudioBlobUrl);
             currentAudioBlobUrl = null;
@@ -1267,6 +1330,272 @@ document.addEventListener('DOMContentLoaded', async function () {
         return jsonData;
     }
 
+    /**
+     * Buffer entire stream then play from one Blob (used when MSE is unavailable or append fails).
+     */
+    async function submitStreamingTTSRequestBlobMode(reader, jsonData, startTime, contentType, filenameFromServer) {
+        const chunks = [];
+        let firstByteMs = null;
+        let totalBytes = 0;
+        const signal = activeTtsAbortController && activeTtsAbortController.signal;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const { done, value } = await reader.read();
+            if (signal && signal.aborted) {
+                try { await reader.cancel(); } catch (e) { /* ignore */ }
+                throw new DOMException('Aborted', 'AbortError');
+            }
+            if (done) break;
+            if (firstByteMs === null) {
+                firstByteMs = Math.round(performance.now() - startTime);
+                // eslint-disable-next-line no-console
+                console.info(`[TTS stream] first network byte at ${firstByteMs}ms (blob mode)`);
+            }
+            if (value) {
+                chunks.push(value);
+                totalBytes += value.byteLength;
+            }
+            if (loadingStatusText) {
+                const fb = firstByteMs != null ? firstByteMs : '--';
+                loadingStatusText.textContent =
+                    `Streaming… ${(totalBytes / 1024).toFixed(1)} KB — first byte ${fb} ms (buffering for playback)`;
+            }
+        }
+
+        const endTime = performance.now();
+        const genTime = ((endTime - startTime) / 1000).toFixed(2);
+        const audioBlob = new Blob(chunks, { type: contentType || 'application/octet-stream' });
+        const resultDetails = {
+            outputUrl: URL.createObjectURL(audioBlob),
+            filename: filenameFromServer,
+            genTime: genTime,
+            submittedVoiceMode: jsonData.voice_mode,
+            submittedPredefinedVoice: jsonData.predefined_voice_id,
+            submittedCloneFile: jsonData.reference_audio_filename,
+        };
+        initializeStreamingAudioPlayer(resultDetails.outputUrl, resultDetails);
+        const ttfbNote = firstByteMs != null ? ` Time to first byte: ${firstByteMs} ms.` : '';
+        showNotification(
+            `Stream ready (${(totalBytes / 1024).toFixed(1)} KB).${ttfbNote} (MediaSource unavailable — buffered full file.)`,
+            'success',
+            6000
+        );
+    }
+
+    /**
+     * Progressive playback via MSE: append network chunks to SourceBuffer, play after first frame.
+     */
+    async function submitStreamingTTSRequestMse(reader, jsonData, startTime, contentType, filenameFromServer, mseMime) {
+        const mediaSource = new MediaSource();
+        const objectUrl = URL.createObjectURL(mediaSource);
+        const baseDetails = {
+            filename: filenameFromServer,
+            genTime: '…',
+            submittedVoiceMode: jsonData.voice_mode,
+            submittedPredefinedVoice: jsonData.predefined_voice_id,
+            submittedCloneFile: jsonData.reference_audio_filename,
+        };
+        initializeStreamingAudioPlayer(objectUrl, baseDetails);
+        currentStreamMediaSource = mediaSource;
+
+        const audioEl = audioPlayerContainer.querySelector('#html-stream-audio');
+        const downloadLink = audioPlayerContainer.querySelector('#download-link');
+        const playerGenTimeSpan = audioPlayerContainer.querySelector('#player-gen-time');
+        if (downloadLink) {
+            downloadLink.href = '#';
+            downloadLink.classList.add('disabled');
+            downloadLink.setAttribute('aria-disabled', 'true');
+        }
+
+        const signal = activeTtsAbortController && activeTtsAbortController.signal;
+        const chunksForDownload = [];
+        let totalBytes = 0;
+        let firstByteMs = null;
+        let firstAppendMs = null;
+        let firstPlayMs = null;
+        let appendCount = 0;
+
+        return new Promise((resolve, reject) => {
+            const onSourceOpen = async () => {
+                let sourceBuffer;
+                try {
+                    sourceBuffer = mediaSource.addSourceBuffer(mseMime);
+                    try {
+                        sourceBuffer.mode = 'sequence';
+                    } catch (modeErr) { /* ignore */ }
+                } catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.warn('[TTS stream] addSourceBuffer failed, using blob mode:', mseMime, e);
+                    try { URL.revokeObjectURL(objectUrl); } catch (x) { /* ignore */ }
+                    currentStreamMediaSource = null;
+                    currentAudioBlobUrl = null;
+                    await submitStreamingTTSRequestBlobMode(
+                        reader, jsonData, startTime, contentType, filenameFromServer
+                    );
+                    resolve();
+                    return;
+                }
+                if (!audioEl) {
+                    reject(new Error('Streaming player audio element not found.'));
+                    return;
+                }
+                const onPlaying = () => {
+                    firstPlayMs = Math.round(performance.now() - startTime);
+                    // eslint-disable-next-line no-console
+                    console.info(`[TTS stream] first playback at ${firstPlayMs}ms (MSE ${jsonData.output_format}, ${mseMime})`);
+                    hideLoadingOverlay();
+                };
+                audioEl.addEventListener('playing', onPlaying, { once: true });
+                try {
+                    // eslint-disable-next-line no-constant-condition
+                    while (true) {
+                        if (signal && signal.aborted) {
+                            try { await reader.cancel(); } catch (c) { /* ignore */ }
+                            try {
+                                if (mediaSource.readyState === 'open') {
+                                    await waitSourceBufferNotUpdating(sourceBuffer);
+                                    try { mediaSource.endOfStream(); } catch (e) { /* ignore */ }
+                                }
+                            } catch (e) { /* ignore */ }
+                            throw new DOMException('Aborted', 'AbortError');
+                        }
+                        const { done, value } = await reader.read();
+                        if (done) {
+                            await waitSourceBufferNotUpdating(sourceBuffer);
+                            if (mediaSource.readyState === 'open') {
+                                try { mediaSource.endOfStream(); } catch (e) { /* ignore */ }
+                            }
+                            break;
+                        }
+                        if (!value) continue;
+                        if (firstByteMs === null) {
+                            firstByteMs = Math.round(performance.now() - startTime);
+                            // eslint-disable-next-line no-console
+                            console.info(`[TTS stream] first network byte at ${firstByteMs}ms (MSE)`);
+                        }
+                        const u8 = new Uint8Array(value.byteLength);
+                        u8.set(value);
+                        totalBytes += u8.byteLength;
+                        chunksForDownload.push(u8);
+                        if (loadingStatusText) {
+                            const fb = firstByteMs != null ? firstByteMs : '--';
+                            const fa = firstAppendMs != null ? firstAppendMs : '--';
+                            loadingStatusText.textContent =
+                                `Streaming… ${(totalBytes / 1024).toFixed(1)} KB — ` +
+                                `net ${fb} ms · append ${fa} ms`;
+                        }
+                        try {
+                            await appendBufferAsync(sourceBuffer, u8);
+                        } catch (appendErr) {
+                            // eslint-disable-next-line no-console
+                            console.warn('[TTS stream] MSE append failed, falling back to Blob playback:', appendErr);
+                            currentStreamMediaSource = null;
+                            try {
+                                if (mediaSource.readyState === 'open') {
+                                    try { mediaSource.endOfStream(); } catch (e) { /* ignore */ }
+                                }
+                            } catch (e) { /* ignore */ }
+                            // eslint-disable-next-line no-constant-condition
+                            while (true) {
+                                if (signal && signal.aborted) {
+                                    try { await reader.cancel(); } catch (c) { /* ignore */ }
+                                    throw new DOMException('Aborted', 'AbortError');
+                                }
+                                const { done: d2, value: v2 } = await reader.read();
+                                if (d2) break;
+                                if (v2) {
+                                    const u2 = new Uint8Array(v2.byteLength);
+                                    u2.set(v2);
+                                    totalBytes += u2.byteLength;
+                                    chunksForDownload.push(u2);
+                                    if (loadingStatusText) {
+                                        loadingStatusText.textContent =
+                                            `Streaming fallback… ${(totalBytes / 1024).toFixed(1)} KB`;
+                                    }
+                                }
+                            }
+                            const endBlob = new Blob(chunksForDownload, { type: contentType || 'application/octet-stream' });
+                            const finalUrl = URL.createObjectURL(endBlob);
+                            if (currentAudioBlobUrl) {
+                                try { URL.revokeObjectURL(currentAudioBlobUrl); } catch (e) { /* ignore */ }
+                            }
+                            currentAudioBlobUrl = finalUrl;
+                            if (objectUrl) {
+                                try { URL.revokeObjectURL(objectUrl); } catch (e) { /* ignore */ }
+                            }
+                            audioEl.src = finalUrl;
+                            if (currentStreamDownloadObjectUrl) {
+                                try { URL.revokeObjectURL(currentStreamDownloadObjectUrl); } catch (e) { /* ignore */ }
+                            }
+                            currentStreamDownloadObjectUrl = finalUrl;
+                            if (downloadLink) {
+                                downloadLink.href = finalUrl;
+                                downloadLink.classList.remove('disabled');
+                                downloadLink.removeAttribute('aria-disabled');
+                            }
+                            if (playerGenTimeSpan) {
+                                playerGenTimeSpan.textContent = `${((performance.now() - startTime) / 1000).toFixed(2)}s`;
+                            }
+                            hideLoadingOverlay();
+                            showNotification(
+                                'MSE could not stream decode; full response buffered for playback and download.',
+                                'info',
+                                6000
+                            );
+                            resolve();
+                            return;
+                        }
+                        appendCount += 1;
+                        if (firstAppendMs === null) {
+                            firstAppendMs = Math.round(performance.now() - startTime);
+                            // eslint-disable-next-line no-console
+                            console.info(`[TTS stream] first buffer append at ${firstAppendMs}ms (MSE)`);
+                        }
+                        if (appendCount === 1) {
+                            hideLoadingOverlay();
+                            audioEl.play().catch(() => {
+                                showNotification(
+                                    'Audio is ready. Press Play in the player to start streamed playback.',
+                                    'info',
+                                    6000
+                                );
+                            });
+                        }
+                    }
+
+                    const endTime = performance.now();
+                    const genTime = ((endTime - startTime) / 1000).toFixed(2);
+                    if (playerGenTimeSpan) playerGenTimeSpan.textContent = `${genTime}s`;
+                    const blob = new Blob(chunksForDownload, { type: contentType || 'application/octet-stream' });
+                    if (currentStreamDownloadObjectUrl) {
+                        try { URL.revokeObjectURL(currentStreamDownloadObjectUrl); } catch (e) { /* ignore */ }
+                    }
+                    currentStreamDownloadObjectUrl = URL.createObjectURL(blob);
+                    if (downloadLink) {
+                        downloadLink.href = currentStreamDownloadObjectUrl;
+                        downloadLink.classList.remove('disabled');
+                        downloadLink.removeAttribute('aria-disabled');
+                    }
+                    const ttfbNote = firstByteMs != null ? ` Time to first byte: ${firstByteMs} ms.` : '';
+                    const tpa = firstAppendMs != null ? ` First append: ${firstAppendMs} ms.` : '';
+                    const tplay = firstPlayMs != null ? ` First playback: ${firstPlayMs} ms.` : '';
+                    showNotification(
+                        `Stream finished (${(totalBytes / 1024).toFixed(1)} KB).${ttfbNote}${tpa}${tplay}`,
+                        'success',
+                        6000
+                    );
+                    resolve();
+                } catch (err) {
+                    if (err && err.name === 'AbortError') {
+                        try { await reader.cancel(); } catch (c) { /* ignore */ }
+                    }
+                    reject(err);
+                }
+            };
+            mediaSource.addEventListener('sourceopen', onSourceOpen, { once: true });
+        });
+    }
+
     async function submitStreamingTTSRequest(jsonData, startTime) {
         activeTtsAbortController = new AbortController();
         if (loadingMessage) loadingMessage.textContent = 'Streaming audio…';
@@ -1289,46 +1618,34 @@ document.addEventListener('DOMContentLoaded', async function () {
             throw new Error('Streaming response has no body (browser limitation?).');
         }
 
-        const chunks = [];
-        let firstByteMs = null;
-        let totalBytes = 0;
         const mimeFallback = jsonData.output_format === 'opus'
             ? 'audio/ogg; codecs=opus'
             : 'audio/mpeg';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (firstByteMs === null) {
-                firstByteMs = Math.round(performance.now() - startTime);
-            }
-            chunks.push(value);
-            totalBytes += value.byteLength;
-            if (loadingStatusText) {
-                loadingStatusText.textContent =
-                    `Streaming… ${(totalBytes / 1024).toFixed(1)} KB — first byte ${firstByteMs} ms`;
+        const contentType = response.headers.get('content-type') || mimeFallback;
+        const cd = response.headers.get('Content-Disposition');
+        let filenameFromServer = `tts_stream.${jsonData.output_format}`;
+        if (cd) {
+            const part = cd.split('filename=')[1];
+            if (part) {
+                filenameFromServer = part.split(';')[0].replace(/"/g, '').trim();
             }
         }
 
-        const endTime = performance.now();
-        const genTime = ((endTime - startTime) / 1000).toFixed(2);
-        const contentType = response.headers.get('content-type') || mimeFallback;
-        const audioBlob = new Blob(chunks, { type: contentType });
-        const cd = response.headers.get('Content-Disposition');
-        const filenameFromServer = cd?.split('filename=')[1]?.replace(/"/g, '').trim()
-            || `tts_stream.${jsonData.output_format}`;
-
-        const resultDetails = {
-            outputUrl: URL.createObjectURL(audioBlob),
-            filename: filenameFromServer,
-            genTime: genTime,
-            submittedVoiceMode: jsonData.voice_mode,
-            submittedPredefinedVoice: jsonData.predefined_voice_id,
-            submittedCloneFile: jsonData.reference_audio_filename,
-        };
-        initializeStreamingAudioPlayer(resultDetails.outputUrl, resultDetails);
-        const ttfbNote = firstByteMs != null ? ` Time to first byte: ${firstByteMs} ms.` : '';
-        showNotification(`Stream finished (${(totalBytes / 1024).toFixed(1)} KB).${ttfbNote}`, 'success', 6000);
+        const mseMime = getMseMimeTypeForTtsOutput(jsonData.output_format);
+        if (typeof window.MediaSource !== 'undefined' && mseMime) {
+            await submitStreamingTTSRequestMse(
+                reader,
+                jsonData,
+                startTime,
+                contentType,
+                filenameFromServer,
+                mseMime
+            );
+        } else {
+            // eslint-disable-next-line no-console
+            console.info(`[TTS stream] MSE not used (mime=${mseMime || 'none'}) — buffering full response for playback.`);
+            await submitStreamingTTSRequestBlobMode(reader, jsonData, startTime, contentType, filenameFromServer);
+        }
     }
 
     async function submitTTSRequest() {
@@ -1490,17 +1807,24 @@ document.addEventListener('DOMContentLoaded', async function () {
             loadingOverlay.style.display = 'flex';
             loadingOverlay.classList.remove('hidden', 'opacity-0'); loadingOverlay.dataset.state = 'open';
             generateBtn.disabled = true; loadingCancelBtn.disabled = false;
+            loadingOverlayVisible = true;
         }
     }
     function hideLoadingOverlay() {
-        if (loadingOverlay && generateBtn) {
-            loadingOverlay.classList.add('opacity-0');
-            setTimeout(() => {
+        if (!loadingOverlay || !generateBtn) return;
+        if (!loadingOverlayVisible) {
+            generateBtn.disabled = false;
+            return;
+        }
+        loadingOverlayVisible = false;
+        loadingOverlay.classList.add('opacity-0');
+        setTimeout(() => {
+            if (loadingOverlay) {
                 loadingOverlay.style.display = 'none';
                 loadingOverlay.dataset.state = 'closed';
-            }, 300);
-            generateBtn.disabled = false;
-        }
+            }
+        }, 300);
+        generateBtn.disabled = false;
     }
 
     // --- Configuration Management ---

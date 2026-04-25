@@ -328,11 +328,12 @@
                                             <label for="stream-tts-toggle" class="checkbox-label">
                                                 <input type="checkbox" id="stream-tts-toggle" name="stream_tts"
                                                     class="form-checkbox">
-                                                <span>Stream audio (test)</span>
+                                                <span>Stream audio (low latency)</span>
                                             </label>
-                                            <p class="form-hint">Uses incremental opus/mp3 encoding (requires ffmpeg on
-                                                the server). Shows time-to-first-byte while downloading; playback starts
-                                                after the stream completes.</p>
+                                            <p class="form-hint">Incremental MP3/Opus from the server (requires ffmpeg).
+                                                The browser starts playback as soon as enough data arrives (MP3
+                                                via MediaSource; Opus may buffer if your browser has no MSE support).
+                                                A full file is still available for download when done.</p>
                                         </div>
                                         <div class="form-grid__full mt-4 flex-row items-center gap-4">
                                             <button id="save-gen-defaults-btn" type="button" class="btn ghost">Save

@@ -265,9 +265,24 @@ def _is_supported_non_verbal_cue(candidate: str) -> bool:
 
 # --- Audio Processing Utilities ---
 # Prepend before MP3/Opus so decoder priming / Layer-III delay does not clip the first words.
-LOSSY_ENCODE_LEADING_PAD_SEC = 0.08
+# Many clients need well over 80ms; 300ms is a safer default for streaming + picky decoders.
+LOSSY_ENCODE_LEADING_PAD_SEC = 0.30
 # Append after speech so encoders (LAME, libopus) can emit complete final frames; avoids cut-off mid-word.
 LOSSY_ENCODE_TRAILING_FLUSH_SEC = 0.35
+
+
+def lossy_encode_leading_silence_sample_count(sample_rate: int) -> int:
+    """
+    Mono PCM samples to prepend before MP3/Opus (file or ffmpeg pipe) so the real
+    speech starts after decoder startup. Includes a granule-scaled floor (~2 MP3 frames
+    at 44.1 kHz) even if LOSSY_ENCODE_LEADING_PAD_SEC is lowered.
+    """
+    if sample_rate <= 0:
+        return 0
+    sec = float(LOSSY_ENCODE_LEADING_PAD_SEC)
+    n = max(0, int(sample_rate * sec))
+    floor = max(1, int(2304 * sample_rate // 44100))
+    return max(n, floor)
 
 
 def _prepend_lossy_encode_leading_silence(
@@ -275,11 +290,8 @@ def _prepend_lossy_encode_leading_silence(
 ) -> np.ndarray:
     if audio is None or audio.size == 0:
         return audio
-    sec = float(LOSSY_ENCODE_LEADING_PAD_SEC)
-    if sec <= 0:
-        return audio
-    n = max(0, int(sample_rate * sec))
-    if n == 0:
+    n = lossy_encode_leading_silence_sample_count(sample_rate)
+    if n <= 0:
         return audio
     pad = np.zeros(n, dtype=np.float32)
     a = audio.astype(np.float32, copy=False)

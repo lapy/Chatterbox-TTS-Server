@@ -27,6 +27,7 @@ from config import (
     get_reference_audio_path,
 )
 from models import OpenAISpeechRequest
+from tts_concurrency import limit_tts_concurrency, limit_tts_concurrency_stream
 from tts_orchestration import (
     build_text_chunks,
     resolve_synthesis_params_openai,
@@ -49,6 +50,7 @@ async def openai_voices_endpoint(model: str = ""):
         )
 
 @router.post("/v1/audio/speech", tags=["OpenAI Compatible"])
+@limit_tts_concurrency
 async def openai_speech_endpoint(request: OpenAISpeechRequest):
     predefined_voices_path = get_predefined_voices_path(ensure_absolute=True)
     reference_audio_path = get_reference_audio_path(ensure_absolute=True)
@@ -195,7 +197,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
                     perf_monitor=perf_monitor,
                 )
             return StreamingResponse(
-                stream_iter,
+                limit_tts_concurrency_stream(stream_iter),
                 media_type=_get_audio_media_type(request.response_format),
                 headers=stream_headers,
             )
@@ -230,7 +232,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
                 )
 
             return StreamingResponse(
-                stream_iter,
+                limit_tts_concurrency_stream(stream_iter),
                 media_type="text/event-stream",
                 headers=stream_headers,
             )

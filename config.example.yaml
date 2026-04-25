@@ -12,6 +12,8 @@ server:
   auth_password: changeme
   cors_allow_all: false
   cors_origins: []
+  # 0 = unlimited. When set (e.g. 2), at most that many /tts and /v1/audio/speech requests run at once.
+  max_concurrent_tts_requests: 0
   enable_performance_monitor: false
   # When enable_performance_monitor is true, synchronize CUDA before/after engine
   # timings (profiling only; adds latency).

@@ -96,7 +96,7 @@ class CustomTTSRequest(BaseModel):
     )
     stream: bool = Field(
         False,
-        description="If true, stream opus or mp3 incrementally (requires ffmpeg). For testing / low latency.",
+        description="If true, stream opus or mp3 incrementally (requires ffmpeg). The web UI uses MediaSource when possible so playback can start before the full response is received.",
     )
 
 

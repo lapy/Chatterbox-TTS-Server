@@ -28,6 +28,7 @@ from config import (
     get_reference_audio_path,
 )
 from models import CustomTTSRequest, ErrorResponse
+from tts_concurrency import limit_tts_concurrency, limit_tts_concurrency_stream
 from tts_orchestration import (
     build_text_chunks,
     resolve_synthesis_params_custom,
@@ -68,6 +69,7 @@ router = APIRouter()
         },
     },
 )
+@limit_tts_concurrency
 async def custom_tts_endpoint(
     request: CustomTTSRequest, background_tasks: BackgroundTasks
 ):
@@ -200,24 +202,25 @@ async def custom_tts_endpoint(
         logger.info(
             f"Streaming /tts ({output_format_str}), {len(text_chunks)} text chunk(s)."
         )
+        stream_iter = _stream_encoded_audio_from_pcm(
+            text_chunks=text_chunks,
+            target_sample_rate=final_output_sample_rate,
+            output_format=output_format_str,
+            sse=False,
+            log_prefix="/tts stream",
+            locked_synthesis={
+                "audio_prompt_path": path_for_synth,
+                "temperature": params.temperature,
+                "exaggeration": params.exaggeration,
+                "cfg_weight": params.cfg_weight,
+                "seed": params.seed,
+                "language": params.language,
+                "speed_factor": params.speed_factor,
+            },
+            perf_monitor=perf_monitor,
+        )
         return StreamingResponse(
-            _stream_encoded_audio_from_pcm(
-                text_chunks=text_chunks,
-                target_sample_rate=final_output_sample_rate,
-                output_format=output_format_str,
-                sse=False,
-                log_prefix="/tts stream",
-                locked_synthesis={
-                    "audio_prompt_path": path_for_synth,
-                    "temperature": params.temperature,
-                    "exaggeration": params.exaggeration,
-                    "cfg_weight": params.cfg_weight,
-                    "seed": params.seed,
-                    "language": params.language,
-                    "speed_factor": params.speed_factor,
-                },
-                perf_monitor=perf_monitor,
-            ),
+            limit_tts_concurrency_stream(stream_iter),
             media_type=_get_audio_media_type(output_format_str),
             headers=headers,
         )

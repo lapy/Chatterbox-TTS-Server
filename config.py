@@ -61,6 +61,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "cors_allow_all": False,
         # Allowed origins when cors_allow_all is False (e.g. ["http://localhost:3000"]).
         "cors_origins": [],
+        # When >0, at most this many TTS/speech requests run concurrently (see tts_concurrency).
+        "max_concurrent_tts_requests": 0,
         # Verbose timing logs for /tts, streaming, and OpenAI speech (off by default).
         "enable_performance_monitor": False,
         # When performance monitor is on, call torch.cuda.synchronize() around engine

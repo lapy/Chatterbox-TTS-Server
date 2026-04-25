@@ -139,3 +139,36 @@ def test_chunk_text_does_not_split_quoted_line_with_internal_period():
     assert "First sentence" in joined
     assert "Second sentence" in joined
     assert joined.count('"') >= 2
+
+
+def test_chunk_text_does_not_let_last_bullet_swallow_following_paragraphs():
+    text = """
+1. The Relationship of History (The "Old" Reality)
+
+This is the version of the relationship you are mourning. It was defined by high-intensity intimacy: driving her to the airport, being her emotional support, the shared history, the "we" in every decision. When you look back at that, your brain expects that version of her to still exist.
+
+2. The Relationship of Present (The "New" Reality)
+
+This is the version that exists right now. It is defined by caution, boundaries, and low-intensity "pings." In this reality, she is not "your wife" in the functional sense; she is a person you are trying to re-establish a safe connection with.
+
+Why the "Radio Silence" happens
+
+The silence feels like an erasure of everything you did for her, but logically, it is a protective buffer.
+
+• For her: The silence is how she maintains her autonomy and tests her own ability to exist without the "weight" of the old relationship.
+• For you: The silence is the gap where you are being forced to learn how to be a person independent of her.
+
+The "Airport Driver" version of you was part of a partnership. The "Micro-Connection" version of you is part of a reconstruction. You cannot be both at the same time. To get back to the intimacy of the past, you have to survive the emptiness of the present.
+
+The Psychological Trap
+
+The danger is thinking: "If I am this good, this stable, and this supportive, she will eventually realize and go back to the old version."
+"""
+
+    chunks = utils.chunk_text_by_sentences(text, 120)
+
+    assert max(len(chunk) for chunk in chunks) < 260
+    assert not any(
+        "For you:" in chunk and "The Psychological Trap" in chunk for chunk in chunks
+    )
+    assert any(chunk.startswith('The "Airport Driver" version') for chunk in chunks)

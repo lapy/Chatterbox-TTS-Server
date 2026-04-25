@@ -206,9 +206,10 @@ VERSION_PATTERN = re.compile(
 POTENTIAL_END_PATTERN = re.compile(r'([.!?])(["\']?)(\s+|$)')
 # Pattern to detect start-of-line bullet points or numbered lists.
 BULLET_POINT_PATTERN = re.compile(r"(?:^|\n)\s*([-•*]|\d+\.)\s+")
+BULLET_LINE_PATTERN = re.compile(r"^\s*([-•*]|\d+\.)\s+")
 # Markdown normalization patterns for TTS input cleanup.
 MD_HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
-MD_UNORDERED_LIST_PATTERN = re.compile(r"^\s*[-+*]\s+", re.MULTILINE)
+MD_UNORDERED_LIST_PATTERN = re.compile(r"^\s*[-+*•]\s+", re.MULTILINE)
 MD_ORDERED_LIST_PATTERN = re.compile(r"^\s*(\d+)\.\s+", re.MULTILINE)
 MD_CODE_SPAN_PATTERN = re.compile(r"`([^`]+)`")
 MD_EMPHASIS_PATTERN = re.compile(r"(\*\*|__|\*|_)([^*_]+?)\1")
@@ -1246,47 +1247,54 @@ def split_into_sentences(text: str) -> List[str]:
         return []
 
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    bullet_point_matches = list(BULLET_POINT_PATTERN.finditer(text))
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", text) if p.strip()]
+    if not paragraphs:
+        return []
 
-    if bullet_point_matches:
-        logger.debug("Bullet points detected in text; splitting by bullet items.")
-        processed_sentences: List[str] = []
-        current_position = 0
-        for i, bullet_match in enumerate(bullet_point_matches):
-            bullet_actual_start_index = bullet_match.start()
-            if i == 0 and bullet_actual_start_index > current_position:
-                pre_bullet_segment = text[
-                    current_position:bullet_actual_start_index
-                ].strip()
-                if pre_bullet_segment:
-                    processed_sentences.extend(
-                        s for s in _split_text_by_punctuation(pre_bullet_segment) if s
-                    )
-
-            next_bullet_start_index = (
-                bullet_point_matches[i + 1].start()
-                if i + 1 < len(bullet_point_matches)
-                else len(text)
+    processed_sentences: List[str] = []
+    for paragraph in paragraphs:
+        bullet_point_matches = list(BULLET_POINT_PATTERN.finditer(paragraph))
+        if not bullet_point_matches:
+            processed_sentences.extend(
+                s for s in _split_text_by_punctuation(paragraph) if s
             )
-            bullet_item_segment = text[
-                bullet_actual_start_index:next_bullet_start_index
-            ].strip()
-            if bullet_item_segment:
-                processed_sentences.append(bullet_item_segment)
-            current_position = next_bullet_start_index
+            continue
 
-        if current_position < len(text):
-            post_bullet_segment = text[current_position:].strip()
-            if post_bullet_segment:
+        logger.debug("Bullet/list paragraph detected; splitting by list item lines.")
+        prose_lines: List[str] = []
+        current_bullet_lines: List[str] = []
+
+        def flush_prose() -> None:
+            nonlocal prose_lines
+            prose = " ".join(line.strip() for line in prose_lines if line.strip())
+            if prose:
                 processed_sentences.extend(
-                    s for s in _split_text_by_punctuation(post_bullet_segment) if s
+                    s for s in _split_text_by_punctuation(prose) if s
                 )
-        return [s for s in processed_sentences if s]
-    else:
-        logger.debug(
-            "No bullet points detected; using punctuation-based sentence splitting."
-        )
-        return _split_text_by_punctuation(text)
+            prose_lines = []
+
+        def flush_bullet() -> None:
+            nonlocal current_bullet_lines
+            item = " ".join(line.strip() for line in current_bullet_lines if line.strip())
+            if item:
+                processed_sentences.append(item)
+            current_bullet_lines = []
+
+        for line in paragraph.splitlines():
+            if BULLET_LINE_PATTERN.match(line):
+                flush_prose()
+                flush_bullet()
+                current_bullet_lines = [line.strip()]
+            elif current_bullet_lines and (line.startswith(" ") or line.startswith("\t")):
+                current_bullet_lines.append(line.strip())
+            else:
+                flush_bullet()
+                prose_lines.append(line.strip())
+
+        flush_bullet()
+        flush_prose()
+
+    return [s for s in processed_sentences if s]
 
 
 def _normalize_latex_math_fragment(fragment: str, *, collapse_spaces: bool = True) -> str:

@@ -11,6 +11,6 @@ outputs
 model_cache
 hf_cache
 reference_audio
-voices
+# voices: bundled in the image so defaults work without a host mount
 *.bak
 *.tmp

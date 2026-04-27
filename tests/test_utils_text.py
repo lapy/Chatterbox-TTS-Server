@@ -67,6 +67,31 @@ def test_normalize_markdown_for_tts_handles_unicode_math_arrows():
     assert normalized == "A  to  B and success  implies  deploy."
 
 
+def test_normalize_markdown_for_tts_spoken_symbol_expansion():
+    text = "R&D is +12.5% at 09:30."
+    normalized = utils.normalize_markdown_for_tts(text)
+    assert "R and D" in normalized
+    assert "12 point 5 percent" in normalized
+    assert "09 30" in normalized
+
+
+def test_normalize_markdown_for_tts_replaces_urls_and_emails():
+    text = "Open https://example.com and email me@acme.io now!"
+    normalized = utils.normalize_markdown_for_tts(text)
+    assert "link" in normalized
+    assert "me at acme.io" in normalized
+
+
+def test_normalize_markdown_for_tts_custom_replacements(monkeypatch):
+    monkeypatch.setattr(
+        "utils.config_manager.get",
+        lambda key, default=None: {"GPU": "G P U"} if key == "text_processing.custom_replacements" else default,
+    )
+    text = "gpu acceleration helps."
+    normalized = utils.normalize_markdown_for_tts(text)
+    assert "G P U acceleration helps." in normalized
+
+
 def test_lossy_leading_silence_can_use_short_profile():
     sr = 24000
 

@@ -211,6 +211,8 @@ This server application enhances the underlying `chatterbox-tts` engine with the
     *   **Codec timing policy:** MP3/Opus priming, trailing flush silence, streaming Opus preroll, MP3 minimum PCM duration, and streaming inter-chunk gap are centralized under `audio_output.codec_timing`. Buffered MP3/Opus uses the short leading guard; longer multi-chunk leading padding applies only to compressed streaming. Routes no longer decide lossy padding from chunk count directly; they build an `AudioOutputPolicy` and the encoder/stream controller applies the policy.
     *   **Web UI streaming:** The UI plays streamed MP3 with **MediaSource** when available (low time-to-playback). If MSE is unsupported or an append fails, it falls back to buffering the full response (same as older builds). Browser-side MSE thresholds are only playback buffering preferences; server codec policy owns audio correctness. Opus MSE support is browser-dependent, so MP3 is the safest progressive UI format.
     *   **Chunk quality retries:** `tts_engine.chunk_quality_max_retries` (default `0`) enables post-synthesis checks and re-synthesis via `engine.synthesize` with a derived seed. **Heuristics** live in `utils.detect_chunk_audio_glitch`. Optional **ASR** (`asr.*`): set `asr.enabled: true`, `asr.openai_compatible_base_url` (include `/v1`), and `asr.access_token`, or pass the token only via env `CHATTERBOX_ASR_ACCESS_TOKEN` (not written into config on load). Optional env `CHATTERBOX_ASR_OPENAI_BASE_URL` overrides the base URL. Tune `asr.min_similarity` (fuzzy match vs. reference chunk text).
+    *   **Text speakability cleanup:** `text_processing.enable_spoken_normalization` (default `true`) applies conservative symbol and formatting cleanup before chunking (examples: `%` -> `percent`, `&` -> `and`, URL -> `link`). Use `text_processing.custom_replacements` for project-specific pronunciations (for example acronyms, product names, or domain jargon).
+    *   **Gentle buffered cleanup:** `audio_processing.gentle_cleanup.*` adds optional post-stitch cleanup before encoding (high-pass, loudness normalization, true-peak limiter). Keep it conservative and avoid aggressive denoise; heavy suppression can make synthetic speech sound metallic. Process in float/WAV first, then encode once to MP3/Opus.
     *   📊 **Benchmark script:** `python scripts/benchmark_cuda_latency.py` (requires `httpx`) hits `/tts` and `/v1/audio/speech` with short/long texts; set `CHATTERBOX_BENCH_BASE` and `CHATTERBOX_BENCH_VOICE` as needed.
     *   ⚙️ All configuration via `config.yaml`.
     *   📦 Uses standard Python virtual environments.
@@ -879,7 +881,7 @@ The primary endpoint for TTS generation is `/tts`, which offers detailed control
         *   `reference_audio_filename` (string, optional): Filename of reference audio (if `voice_mode` is "clone").
         *   `output_format` (string, "wav" or "opus", default "wav").
         *   `split_text` (boolean, default True): Whether to chunk long text.
-        *   `chunk_size` (integer, default 120): Target characters per chunk.
+        *   `chunk_size` (integer, default 300): Target characters per chunk.
         *   `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`: Generation parameters overriding defaults.
     *   **Response:** Streaming audio (`audio/wav`, `audio/mpeg`, or `audio/ogg; codecs=opus` for Opus-in-Ogg).
 *   **`/v1/audio/speech` (POST):** OpenAI-compatible.
@@ -1018,7 +1020,7 @@ docker compose -f docker-compose-cpu.yml restart chatterbox-tts-server
 *   **VRAM Out of Memory (OOM):**
     *   Ensure your GPU meets minimum requirements for Chatterbox.
     *   Close other GPU-intensive applications.
-    *   If processing very long text even with chunking, try reducing `chunk_size` (e.g., 100-150).
+    *   If processing very long text even with chunking, try reducing `chunk_size` (e.g., 150-250). Lower chunk sizes improve cancellation responsiveness but increase buffered latency due to more chunk generations.
 
 ### General Issues
 
@@ -1115,7 +1117,7 @@ docker system df
 *   **VRAM Out of Memory (OOM):**
     *   Ensure your GPU meets minimum requirements for Chatterbox.
     *   Close other GPU-intensive applications.
-    *   If processing very long text even with chunking, try reducing `chunk_size` (e.g., 100-150).
+    *   If processing very long text even with chunking, try reducing `chunk_size` (e.g., 150-250). Lower chunk sizes improve cancellation responsiveness but increase buffered latency due to more chunk generations.
 *   **Import Errors (e.g., `chatterbox-tts`, `librosa`):** Ensure virtual environment is active and `pip install -r requirements.txt` completed successfully.
 *   **`libsndfile` Error (Linux):** Run `sudo apt install libsndfile1`.
 *   **Model Download Fails:** Check internet connection. `ChatterboxTTS.from_pretrained()` will attempt to download from Hugging Face Hub. Ensure `model.repo_id` in `config.yaml` is correct.

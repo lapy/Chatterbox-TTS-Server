@@ -42,8 +42,9 @@ def test_build_text_chunks_no_split_when_below_threshold():
 
 
 def test_build_text_chunks_splits_when_long(monkeypatch):
-    def fake_chunk(text, size):
+    def fake_chunk(text, size, *, text_is_normalized=False):
         assert size == 100
+        assert text_is_normalized is True
         return ["first", "second"]
 
     monkeypatch.setitem(
@@ -65,8 +66,9 @@ def test_build_text_chunks_splits_when_long(monkeypatch):
 def test_build_text_chunks_clamps_chunk_size(monkeypatch):
     sizes = []
 
-    def fake_chunk(text, size):
+    def fake_chunk(text, size, *, text_is_normalized=False):
         sizes.append(size)
+        assert text_is_normalized is True
         mid = max(1, len(text) // 2)
         return [text[:mid], text[mid:]]
 
@@ -87,6 +89,37 @@ def test_build_text_chunks_clamps_chunk_size(monkeypatch):
         text, split_enabled=True, chunk_size=9999, chunk_size_min=50, chunk_size_max=200
     )
     assert sizes == [50, 200]
+
+
+def test_build_text_chunks_normalizes_once_before_chunking(monkeypatch):
+    calls = {"normalize": 0, "chunk": 0}
+
+    def fake_normalize(value):
+        calls["normalize"] += 1
+        return f"normalized::{value}"
+
+    def fake_chunk(text, size, *, text_is_normalized=False):
+        calls["chunk"] += 1
+        assert text_is_normalized is True
+        assert text.startswith("normalized::")
+        assert size == 100
+        return ["chunked"]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "utils",
+        types.SimpleNamespace(
+            chunk_text_by_sentences=fake_chunk,
+            normalize_markdown_for_tts=fake_normalize,
+        ),
+    )
+
+    text = "Hello. " * 40
+    chunks = build_text_chunks(
+        text, split_enabled=True, chunk_size=100, chunk_size_min=50, chunk_size_max=200
+    )
+    assert chunks == ["chunked"]
+    assert calls == {"normalize": 1, "chunk": 1}
 
 
 def test_resolve_synthesis_params_custom_explicit():
@@ -274,6 +307,42 @@ def test_synthesize_text_chunks_batch_splits_when_chunk_batch_size_set(monkeypat
     assert sr == 24000
     assert [float(seg.reshape(-1)[0]) for seg in segments] == [1.0, 2.0, 3.0]
     assert calls == [["slow", "fast"], ["medium"]]
+
+
+def test_synthesize_text_chunks_batch_zero_keeps_single_batch_with_cancellation(monkeypatch):
+    params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 0, "en", 1.0)
+    calls = []
+    cancellation_calls = []
+
+    def fake_synthesize_batch(jobs, perf_monitor=None, log_prefix=""):
+        calls.append([(job.get("audio_prompt_path"), job["text"]) for job in jobs])
+        return [(torch.tensor([1.0], dtype=torch.float32), 24000) for _ in jobs]
+
+    async def fake_cancellation_check():
+        cancellation_calls.append("checked")
+
+    monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
+    monkeypatch.setattr("tts_orchestration.config_manager.get_int", lambda _k, _d: 0)
+
+    asyncio.run(
+        synthesize_text_chunks_async(
+            ["chunk a", "chunk b", "chunk c"],
+            audio_prompt_path_str="/voices/ref.wav",
+            params=params,
+            perf_monitor=None,
+            log_prefix="test",
+            cancellation_check=fake_cancellation_check,
+        )
+    )
+
+    assert calls == [
+        [
+            ("/voices/ref.wav", "chunk a"),
+            (None, "chunk b"),
+            (None, "chunk c"),
+        ]
+    ]
+    assert len(cancellation_calls) >= 2
 
 
 def test_chunk_quality_retry_invokes_synthesize(monkeypatch):

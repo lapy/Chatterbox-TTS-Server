@@ -65,6 +65,10 @@ class CodecTimingPolicy:
             leading = 0.0
         elif stream_format == StreamFormat.NONE or chunk_count <= 1:
             leading = short_leading
+        elif output_format == "opus" and stream_format == StreamFormat.AUDIO:
+            # Direct audio streaming can start much earlier without the heavy
+            # multichunk guard silence used for SSE/client bridges.
+            leading = short_leading
         else:
             leading = multichunk_leading
 
@@ -74,7 +78,7 @@ class CodecTimingPolicy:
             streaming_opus_preroll_sec=(
                 cfg("streaming_opus_preroll_sec", utils.LOSSY_ENCODE_LEADING_PAD_SEC)
                 if output_format == "opus"
-                and stream_format in {StreamFormat.AUDIO, StreamFormat.SSE}
+                and stream_format == StreamFormat.SSE
                 and chunk_count > 1
                 else 0.0
             ),

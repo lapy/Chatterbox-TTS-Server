@@ -181,7 +181,11 @@ async def custom_tts_endpoint(
 
     final_output_sample_rate = get_audio_sample_rate()
     params = resolve_synthesis_params_custom(request)
-    chunk_size_to_use = request.chunk_size if request.chunk_size is not None else 120
+    chunk_size_to_use = (
+        request.chunk_size
+        if request.chunk_size is not None
+        else config_manager.get_int("ui_state.last_chunk_size", 300)
+    )
     text_chunks = build_text_chunks(
         request.text,
         split_enabled=bool(request.split_text),

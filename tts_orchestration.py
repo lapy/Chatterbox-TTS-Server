@@ -26,6 +26,13 @@ from models import CustomTTSRequest, OpenAISpeechRequest
 logger = logging.getLogger(__name__)
 
 
+def _to_float32_chunk_numpy(audio_tensor: Any) -> np.ndarray:
+    """Convert engine output tensor to float32 numpy with minimal copies."""
+    if hasattr(audio_tensor, "device") and getattr(audio_tensor.device, "type", "") != "cpu":
+        audio_tensor = audio_tensor.cpu()
+    return audio_tensor.numpy().squeeze().astype(np.float32)
+
+
 @dataclass(frozen=True)
 class ResolvedSynthesisParams:
     temperature: float
@@ -114,7 +121,9 @@ def build_text_chunks(
     chunk_size_clamped = max(chunk_size_min, min(chunk_size_max, int(chunk_size)))
     threshold = chunk_size_clamped * 1.5
     if split_enabled and len(normalized_text) > threshold:
-        return _utils.chunk_text_by_sentences(normalized_text, chunk_size_clamped)
+        return _utils.chunk_text_by_sentences(
+            normalized_text, chunk_size_clamped, text_is_normalized=True
+        )
     return [normalized_text] if normalized_text else []
 
 
@@ -157,10 +166,10 @@ async def synthesize_text_chunks_async(
     chunks_count = len(text_chunks)
     # 0 or negative => single batch (one threadpool hop) for lowest orchestration overhead.
     if batch_cfg <= 0:
-        batch_size = 1 if cancellation_check is not None else chunks_count
+        batch_size = chunks_count
     else:
         batch_size = max(1, batch_cfg)
-    logger.info(
+    logger.debug(
         f"{log_prefix}: sequential chunk synthesis batch_size={batch_size} "
         f"(cfg={batch_cfg}), chunks={chunks_count}"
     )
@@ -173,7 +182,7 @@ async def synthesize_text_chunks_async(
         jobs = []
         for i in range(batch_start, batch_end):
             global_idx = i + 1
-            logger.info(
+            logger.debug(
                 f"{log_prefix}: queueing chunk {global_idx}/{chunks_count}..."
             )
             # First chunk in each lock-held batch prepares reference conditionals.
@@ -223,7 +232,7 @@ async def synthesize_text_chunks_async(
                     f"{log_prefix}: inconsistent sample rate on chunk {chunk_index} ({sr} Hz vs "
                     f"{engine_sr} Hz); continuing with first chunk rate."
                 )
-            chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+            chunk_np = _to_float32_chunk_numpy(audio_tensor)
             segments.append(_ensure_mono_waveform_1d(chunk_np))
     if engine_sr is None:
         raise RuntimeError(f"{log_prefix}: could not determine engine sample rate.")
@@ -295,7 +304,7 @@ async def synthesize_text_chunks_async(
                         chunks_count,
                     )
                     break
-                chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+                chunk_np = _to_float32_chunk_numpy(audio_tensor)
                 segments[i] = _ensure_mono_waveform_1d(chunk_np)
                 if sr != engine_sr:
                     logger.warning(

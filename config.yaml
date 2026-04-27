@@ -43,6 +43,7 @@ generation_defaults:
   seed: 0
   speed_factor: 1
   language: en
+  turbo_repetition_penalty: 1.2
 audio_output:
   format: wav
   sample_rate: 24000
@@ -55,46 +56,62 @@ audio_output:
     streaming_opus_preroll_sec: 2.5
     streaming_mp3_min_pcm_sec: 2.6
     streaming_inter_chunk_gap_sec: 0.03
+audio_processing:
+  enable_crossfade: true
+  enable_silence_trimming: false
+  enable_internal_silence_fix: false
+  enable_unvoiced_removal: false
+  gentle_cleanup:
+    enabled: false
+    enable_highpass: true
+    highpass_hz: 80.0
+    enable_loudness_normalization: true
+    target_lufs: -18.0
+    enable_true_peak_limiter: true
+    true_peak_limit: 0.95
+text_processing:
+  enable_spoken_normalization: true
+  custom_replacements: {}
 request_limits:
   max_text_chars: 20000
 ui_state:
-  last_text: '[sniff] So I just finished watching this film, and I''m not okay. I''m
-    really not okay. [sigh] They told me it was a "heartwarming family movie" and
-    I walked in expecting some laughs, maybe a few feel-good moments. [gasp] They
-    did not warn me about the dog. They did NOT warn me about what happens to the
-    dog! [groan] I''m a grown adult, and I was openly weeping in the theater! [laugh]
-    The guy next to me offered me his popcorn out of pity! [cough] Excuse me, I''m
-    still recovering. [clear throat] Now, from a technical standpoint, the cinematography
-    was excellent. [sniff] The score was absolutely devastating, in the best possible
-    way. [chuckle] My only complaint is that they emotionally manipulated me so effectively
-    that I may never trust a movie poster again. [sigh] Those lying, deceitful posters
-    with their happy families and golden retrievers. [gasp] Don''t even get me started
-    on the flashback montage! [groan] Who authorized that montage?! [shush] I''m trying
-    to compose myself here. [laugh] So, final rating: ten out of ten, absolutely would
-    not recommend unless you enjoy having your heart removed and stomped on. [sniff]
-    I''m going to go hug my pets now. [cough] This is the emotional movie reviewer
-    signing off. [sigh] Stay hydrated, folks. You''ll need the extra fluids for the
-    tears.
+  last_text: '[sigh] Okay, once upon a time there was a princess. [groan] No, you''re
+    right, we did princess yesterday. Fine, a dragon. [cough] Excuse me. So there
+    was this dragon, and he lived in a cave. [sniff] A very nice cave with excellent
+    property values. [chuckle] No, dragons don''t pay rent, they just take caves.
+    That''s called squatting. Never mind, forget I said that. [clear throat] Anyway,
+    the dragon was very lonely because... [gasp] What do you mean you want a glass
+    of water? You just had water! [sigh] Fine, here''s your water. [groan] Where was
+    I? Right, lonely dragon. So he decided to make friends with the village nearby.
+    [laugh] No, he didn''t eat anyone! This is a friendly dragon! [shush] Lower your
+    voice, your sister is sleeping. [sniff] So the dragon brought everyone cookies.
+    [cough] Yes, dragons can bake. [chuckle] It''s a magical world, anything is possible.
+    Except sleeping through the night, apparently. [sigh] And they all became best
+    friends and lived happily ever after and went to sleep immediately. The end! [gasp]
+    What do you mean what happened next? That''s the whole story! [groan] Okay, okay,
+    one more chapter. [sigh] The dragon also had a pet... unicorn. And the unicorn''s
+    name was... [sniff] Please Fall Asleep the Third. And the unicorn''s special power
+    was making children very, very drowsy...
 
     '
   last_voice_mode: predefined
-  last_predefined_voice: Emily.wav
+  last_predefined_voice: Olivia.wav
   last_reference_file: none
   last_seed: 0
-  last_chunk_size: 400
+  last_chunk_size: 200
   last_split_text_enabled: true
-  last_temperature: 0.8
-  last_exaggeration: 1.25
-  last_cfg_weight: 0.6
+  last_temperature: 0.75
+  last_exaggeration: 1.1
+  last_cfg_weight: 0.55
   last_language: en
   last_speed_factor: 1
   last_output_format: mp3
-  last_stream_tts_enabled: false
+  last_stream_tts_enabled: true
   last_model_repo_id: chatterbox-turbo
   hide_chunk_warning: false
   hide_generation_warning: true
   theme: light
-  last_preset_name: "\u26A1 Turbo: The Emotional Movie Reviewer"
+  last_preset_name: "\u26A1 Turbo: The Overworked Parent's Bedtime Story"
 ui:
   title: Chatterbox TTS Server
   show_language_select: true

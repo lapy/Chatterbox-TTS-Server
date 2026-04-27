@@ -380,9 +380,9 @@ def _prepare_reference_audio_unlocked(
     if not MODEL_LOADED or chatterbox_model is None:
         raise RuntimeError("TTS model is not loaded.")
     if loaded_model_type == "turbo":
+        # Turbo does not support style controls like exaggeration/cfg at inference.
         chatterbox_model.prepare_conditionals(
             audio_prompt_path,
-            exaggeration=exaggeration,
             norm_loudness=norm_loudness,
         )
     else:
@@ -416,11 +416,10 @@ def _generate_waveform_unlocked(
             rep = 1.0
         if rep > 2.0:
             rep = 2.0
+        # Turbo does not accept cfg_weight/exaggeration kwargs.
         return chatterbox_model.generate(
             text=text,
             audio_prompt_path=None,
-            exaggeration=exaggeration,
-            cfg_weight=cfg_weight,
             temperature=temperature,
             repetition_penalty=rep,
         )

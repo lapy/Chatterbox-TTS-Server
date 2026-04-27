@@ -148,6 +148,31 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "streaming_inter_chunk_gap_sec": 0.03,
         },
     },
+    "audio_processing": {
+        # Smart multi-chunk stitching with crossfades and sentence pauses.
+        "enable_crossfade": True,
+        # Optional global cleanup passes after chunk stitching.
+        "enable_silence_trimming": False,
+        "enable_internal_silence_fix": False,
+        "enable_unvoiced_removal": False,
+        # Conservative post-stitch quality cleanup for buffered generation.
+        "gentle_cleanup": {
+            "enabled": False,
+            "enable_highpass": True,
+            "highpass_hz": 80.0,
+            "enable_loudness_normalization": True,
+            "target_lufs": -18.0,
+            "enable_true_peak_limiter": True,
+            "true_peak_limit": 0.95,
+        },
+    },
+    "text_processing": {
+        # Conservative spoken-text cleanup before chunking/synthesis.
+        "enable_spoken_normalization": True,
+        # Optional pronunciation or product-name replacements.
+        # Example: {"GPU": "G P U", "RTX": "R T X"}
+        "custom_replacements": {},
+    },
     "request_limits": {
         # Hard cap for API text input before chunking/model work starts.
         "max_text_chars": 20000,
@@ -158,7 +183,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "last_predefined_voice": None,  # Filename of the last used predefined voice.
         "last_reference_file": None,  # Filename of the last used reference audio file.
         "last_seed": 0,  # Last used generation seed.
-        "last_chunk_size": 120,  # Last used chunk size for text splitting in UI.
+        # Default chunk size favors fewer model_generate calls for buffered latency.
+        "last_chunk_size": 300,
         "last_split_text_enabled": True,  # Whether text splitting was last enabled in UI.
         # Last generation params from the UI (used by OpenAI /v1/audio/speech for fields not in that API).
         "last_temperature": 0.8,

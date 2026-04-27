@@ -264,6 +264,16 @@ MD_CODE_SPAN_PATTERN = re.compile(r"`([^`]+)`")
 MD_EMPHASIS_PATTERN = re.compile(r"(\*\*|__|\*|_)([^*_]+?)\1")
 MD_LEFTOVER_FORMAT_MARKERS_PATTERN = re.compile(r"\*+|(?<!\w)_{1,3}(?!\w)")
 MD_HORIZONTAL_RULE_PATTERN = re.compile(r"^\s{0,3}([-*_])(?:\s*\1){2,}\s*$", re.MULTILINE)
+URL_PATTERN = re.compile(r"\bhttps?://\S+\b", re.IGNORECASE)
+EMAIL_PATTERN = re.compile(r"\b([A-Z0-9._%+-]+)@([A-Z0-9.-]+\.[A-Z]{2,})\b", re.IGNORECASE)
+PERCENT_PATTERN = re.compile(r"\b(\d+(?:\.\d+)?)\s*%")
+TIME_PATTERN = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+DECIMAL_PATTERN = re.compile(r"\b(\d+)\.(\d+)\b")
+UNIT_PATTERN = re.compile(
+    r"\b(\d+(?:\.\d+)?)\s*(kg|km|cm|mm|ms|mb|gb|khz|mhz|ghz|hz|m|s)\b",
+    re.IGNORECASE,
+)
+PUNCT_REPEAT_PATTERN = re.compile(r"([!?])\1{1,}")
 LATEX_INLINE_MATH_PATTERN = re.compile(r"\${1,2}([^$]+?)\${1,2}", re.DOTALL)
 LATEX_PAREN_MATH_PATTERN = re.compile(r"\\\((.*?)\\\)", re.DOTALL)
 LATEX_BRACKET_MATH_PATTERN = re.compile(r"\\\[(.*?)\\\]", re.DOTALL)
@@ -1400,6 +1410,44 @@ def normalize_latex_for_tts(text: str) -> str:
     return normalized
 
 
+def _apply_custom_text_replacements(text: str) -> str:
+    raw = config_manager.get("text_processing.custom_replacements", {})
+    if not isinstance(raw, dict) or not raw:
+        return text
+    result = text
+    for key, replacement in raw.items():
+        if not isinstance(key, str) or not key:
+            continue
+        repl = replacement if isinstance(replacement, str) else str(replacement)
+        result = re.sub(re.escape(key), repl, result, flags=re.IGNORECASE)
+    return result
+
+
+def normalize_spoken_text_for_tts(text: str) -> str:
+    """Conservative speakable-text cleanup before TTS chunking/inference."""
+    if not text:
+        return text
+    if not config_manager.get_bool("text_processing.enable_spoken_normalization", True):
+        return text
+
+    normalized = text
+    normalized = URL_PATTERN.sub(" link ", normalized)
+    normalized = EMAIL_PATTERN.sub(r"\1 at \2", normalized)
+    normalized = normalized.replace("&", " and ")
+    normalized = normalized.replace("+", " plus ")
+    normalized = PERCENT_PATTERN.sub(r"\1 percent", normalized)
+    normalized = TIME_PATTERN.sub(r"\1 \2", normalized)
+    normalized = DECIMAL_PATTERN.sub(r"\1 point \2", normalized)
+    normalized = re.sub(r"\b(\d{1,3})(,\d{3})+\b", lambda m: m.group(0).replace(",", ""), normalized)
+    normalized = UNIT_PATTERN.sub(r"\1 \2", normalized)
+    normalized = PUNCT_REPEAT_PATTERN.sub(r"\1", normalized)
+    normalized = re.sub(r"\.{4,}", "...", normalized)
+    normalized = _apply_custom_text_replacements(normalized)
+    normalized = re.sub(r" *\n *", "\n", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
 def normalize_markdown_for_tts(text: str) -> str:
     """
     Convert common markdown formatting into plain text suitable for TTS.
@@ -1424,6 +1472,7 @@ def normalize_markdown_for_tts(text: str) -> str:
 
     # Strip emojis/symbol pictographs for cleaner TTS pronunciation.
     normalized = EMOJI_PATTERN.sub("", normalized)
+    normalized = normalize_spoken_text_for_tts(normalized)
 
     # Keep paragraph breaks but avoid pathological long pause blocks.
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
@@ -1484,6 +1533,8 @@ def _preprocess_and_segment_text(full_text: str) -> List[Tuple[Optional[str], st
 def chunk_text_by_sentences(
     full_text: str,
     chunk_size: int,
+    *,
+    text_is_normalized: bool = False,
 ) -> List[str]:
     """
     Chunks text into manageable pieces for TTS processing, respecting sentence boundaries
@@ -1503,7 +1554,10 @@ def chunk_text_by_sentences(
     if chunk_size <= 0:
         chunk_size = float("inf")
 
-    normalized_text = normalize_markdown_for_tts(full_text)
+    if text_is_normalized:
+        normalized_text = full_text
+    else:
+        normalized_text = normalize_markdown_for_tts(full_text)
     processed_segments = _preprocess_and_segment_text(normalized_text)
     if not processed_segments:
         return []

@@ -22,6 +22,14 @@ from audio_output import CodecTimingPolicy, StreamFormat, get_audio_media_type
 from config import config_manager
 
 logger = logging.getLogger(__name__)
+_FFMPEG_PATH_CACHE: Optional[str] = None
+
+
+def _get_ffmpeg_path_cached() -> Optional[str]:
+    global _FFMPEG_PATH_CACHE
+    if _FFMPEG_PATH_CACHE is None:
+        _FFMPEG_PATH_CACHE = shutil.which("ffmpeg")
+    return _FFMPEG_PATH_CACHE
 
 
 def _queue_put_interruptible(
@@ -169,6 +177,62 @@ def _remove_dc_offset(
     except Exception as e:
         logger.error(f"DC offset removal failed: {e}")
         return audio.astype(np.float32, copy=False)
+
+
+def _apply_true_peak_limiter(audio: np.ndarray, peak_limit: float) -> np.ndarray:
+    """Scale waveform if needed so absolute peak does not exceed ``peak_limit``."""
+    limited = audio.astype(np.float32, copy=False)
+    limit = max(0.01, min(1.0, float(peak_limit)))
+    peak = float(np.max(np.abs(limited))) if limited.size else 0.0
+    if peak > limit:
+        limited = limited * (limit / peak)
+    return limited
+
+
+def _apply_gentle_voice_cleanup(
+    audio: np.ndarray, sample_rate: int, *, log_prefix: str = "TTS"
+) -> np.ndarray:
+    """
+    Optional conservative post-stitch cleanup for buffered generation.
+
+    This intentionally avoids aggressive denoise to reduce metallic artifacts.
+    """
+    if not config_manager.get_bool("audio_processing.gentle_cleanup.enabled", False):
+        return audio.astype(np.float32, copy=False)
+
+    cleaned = audio.astype(np.float32, copy=False)
+
+    if config_manager.get_bool("audio_processing.gentle_cleanup.enable_highpass", True):
+        cutoff = config_manager.get_float("audio_processing.gentle_cleanup.highpass_hz", 80.0)
+        cleaned = _remove_dc_offset(cleaned, sample_rate, cutoff_hz=max(15.0, cutoff))
+
+    if config_manager.get_bool(
+        "audio_processing.gentle_cleanup.enable_loudness_normalization", True
+    ):
+        target_lufs = config_manager.get_float(
+            "audio_processing.gentle_cleanup.target_lufs", -18.0
+        )
+        try:
+            import pyloudnorm as pyln
+
+            meter = pyln.Meter(sample_rate)
+            integrated = meter.integrated_loudness(cleaned)
+            if np.isfinite(integrated):
+                cleaned = pyln.normalize.loudness(cleaned, integrated, float(target_lufs)).astype(
+                    np.float32
+                )
+        except Exception as exc:
+            logger.warning("%s: loudness normalization skipped: %s", log_prefix, exc)
+
+    if config_manager.get_bool(
+        "audio_processing.gentle_cleanup.enable_true_peak_limiter", True
+    ):
+        peak_limit = config_manager.get_float(
+            "audio_processing.gentle_cleanup.true_peak_limit", 0.95
+        )
+        cleaned = _apply_true_peak_limiter(cleaned, peak_limit)
+
+    return cleaned.astype(np.float32, copy=False)
 
 
 def _ensure_mono_waveform_1d(audio: np.ndarray) -> np.ndarray:
@@ -359,6 +423,11 @@ def _finalize_stitched_tts_audio(
         )
         _perf("Global unvoiced removal applied")
 
+    final_audio_np = _apply_gentle_voice_cleanup(
+        final_audio_np, engine_output_sample_rate, log_prefix=log_prefix
+    )
+    _perf("Gentle voice cleanup applied")
+
     if enable_smart_stitching and config_manager.get_bool(
         "audio_processing.enable_silence_trimming", False
     ):
@@ -431,7 +500,9 @@ async def async_iter_locked_pcm_s16le(
                     audio_tensor, sr = utils.apply_speed_factor(
                         audio_tensor, sr, speed
                     )
-                chunk_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+                if hasattr(audio_tensor, "device") and getattr(audio_tensor.device, "type", "") != "cpu":
+                    audio_tensor = audio_tensor.cpu()
+                chunk_np = audio_tensor.numpy().squeeze().astype(np.float32)
                 wave = _ensure_mono_waveform_1d(chunk_np)
                 if not _queue_put_interruptible(
                     pcm_queue,
@@ -526,7 +597,7 @@ def _get_ffmpeg_stream_command(
             "-f",
             "ogg",
             "-page_duration",
-            "50000",
+            "10000",
             "pipe:1",
         ]
 
@@ -569,7 +640,7 @@ async def _stream_encoded_audio_from_pcm(
     if locked_synthesis is None:
         raise ValueError(f"{log_prefix}: provide locked_synthesis")
 
-    ffmpeg_path = shutil.which("ffmpeg")
+    ffmpeg_path = _get_ffmpeg_path_cached()
     if not ffmpeg_path:
         raise RuntimeError(
             f"{log_prefix}: ffmpeg is required for streaming '{output_format}' output."
@@ -620,6 +691,17 @@ async def _stream_encoded_audio_from_pcm(
         stream_t0 = time.monotonic()
         first_pcm_logged = False
         cancelled = False
+        # Coalesce small PCM items before drain() to reduce event-loop/syscall overhead.
+        flush_threshold_bytes = 32 * 1024
+        pending_write = bytearray()
+
+        async def _flush_pending() -> None:
+            if not pending_write:
+                return
+            proc.stdin.write(bytes(pending_write))
+            pending_write.clear()
+            await proc.stdin.drain()
+
         try:
             lead_pad_samples = 0
             if output_format in ("mp3", "opus"):
@@ -650,9 +732,12 @@ async def _stream_encoded_audio_from_pcm(
                         time.monotonic() - stream_t0,
                     )
                     first_pcm_logged = True
-                proc.stdin.write(item)
-                await proc.stdin.drain()
+                pending_write.extend(item)
+                if len(pending_write) >= flush_threshold_bytes:
+                    await _flush_pending()
                 pcm_samples_written += len(item) // 2
+
+            await _flush_pending()
 
             # Trailing PCM silence so libmp3lame / libopus finish the last frame(s) instead
             # of cutting off speech (common when stdin closes immediately after content).

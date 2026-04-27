@@ -21,8 +21,8 @@ tts_engine:
   device: cuda
   predefined_voices_path: voices
   reference_audio_path: reference_audio
-  default_voice_id: default_sample.wav
-  chunk_batch_size: 1
+  default_voice_id: Abigail.wav
+  chunk_batch_size: 0
   chunk_quality_max_retries: 0
 asr:
   enabled: false
@@ -30,7 +30,7 @@ asr:
   access_token: ''
   model: whisper-1
   min_similarity: 0.82
-  timeout_sec: 120.0
+  timeout_sec: 120
   language: ''
   skip_if_text_shorter_than: 12
 paths:
@@ -75,34 +75,25 @@ text_processing:
 request_limits:
   max_text_chars: 20000
 ui_state:
-  last_text: '[sigh] Okay, once upon a time there was a princess. [groan] No, you''re
-    right, we did princess yesterday. Fine, a dragon. [cough] Excuse me. So there
-    was this dragon, and he lived in a cave. [sniff] A very nice cave with excellent
-    property values. [chuckle] No, dragons don''t pay rent, they just take caves.
-    That''s called squatting. Never mind, forget I said that. [clear throat] Anyway,
-    the dragon was very lonely because... [gasp] What do you mean you want a glass
-    of water? You just had water! [sigh] Fine, here''s your water. [groan] Where was
-    I? Right, lonely dragon. So he decided to make friends with the village nearby.
-    [laugh] No, he didn''t eat anyone! This is a friendly dragon! [shush] Lower your
-    voice, your sister is sleeping. [sniff] So the dragon brought everyone cookies.
-    [cough] Yes, dragons can bake. [chuckle] It''s a magical world, anything is possible.
-    Except sleeping through the night, apparently. [sigh] And they all became best
-    friends and lived happily ever after and went to sleep immediately. The end! [gasp]
-    What do you mean what happened next? That''s the whole story! [groan] Okay, okay,
-    one more chapter. [sigh] The dragon also had a pet... unicorn. And the unicorn''s
-    name was... [sniff] Please Fall Asleep the Third. And the unicorn''s special power
-    was making children very, very drowsy...
-
-    '
+  last_text: "You think you've won, don't you? Standing there with your righteous\
+    \ sword and your noble heart. How delightfully naive. I've been playing this game\
+    \ since before your grandmother's grandmother was a whisper in the wind. Every\
+    \ move you've made, every clever plan, every supposed victory \u2014 all pieces\
+    \ on my board, my dear hero. You see a villain who lost. I see a centuries-old\
+    \ design finally coming to fruition. The curse you think you've broken? It was\
+    \ merely the lock. And you, sweet child, have just handed me the key. Now, if\
+    \ you'll excuse me, I have a kingdom to reshape in my image. Don't look so surprised.\
+    \ In every story, someone has to play the monster. I simply chose to be the very\
+    \ best.\n"
   last_voice_mode: predefined
   last_predefined_voice: Olivia.wav
   last_reference_file: none
-  last_seed: 0
+  last_seed: 666
   last_chunk_size: 200
   last_split_text_enabled: true
-  last_temperature: 0.75
-  last_exaggeration: 1.1
-  last_cfg_weight: 0.55
+  last_temperature: 0.8
+  last_exaggeration: 1.3
+  last_cfg_weight: 0.6
   last_language: en
   last_speed_factor: 1
   last_output_format: mp3
@@ -110,8 +101,8 @@ ui_state:
   last_model_repo_id: chatterbox-turbo
   hide_chunk_warning: false
   hide_generation_warning: true
-  theme: light
-  last_preset_name: "\u26A1 Turbo: The Overworked Parent's Bedtime Story"
+  theme: dark
+  last_preset_name: Fairy Tale Villain Monologue
 ui:
   title: Chatterbox TTS Server
   show_language_select: true

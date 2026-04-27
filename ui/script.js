@@ -630,7 +630,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (applyModelBtn) {
                 applyModelBtn.disabled = false;
                 applyModelBtn.innerHTML = `
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 mr-1">
+                    <svg class="btn__icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
                     </svg>
                     Apply & Restart
@@ -647,7 +647,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         const pageTitle = currentConfig?.ui?.title || "Chatterbox TTS Server";
         document.title = pageTitle;
         if (appTitleLink) appTitleLink.textContent = pageTitle;
-        if (ttsFormHeader) ttsFormHeader.textContent = `Generate Speech`;
+        if (ttsFormHeader) ttsFormHeader.textContent = 'Create audio';
         loadInitialUiState();
         populatePredefinedVoices();
         populateReferenceFiles();
@@ -915,6 +915,62 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
 
+    /** @param {string} name full preset name from presets.yaml */
+    function isTurboPresetName(name) {
+        return /^\s*⚡/.test(name);
+    }
+
+    /**
+     * Lightning bolt (SVG) for Turbo presets — replaces raw emoji to avoid line-box misalignment and overflow.
+     * Uses currentColor so .preset-btn.selected still looks correct.
+     * Path: Heroicons 24/solid/bolt.
+     */
+    function createPresetTurboBoltIcon() {
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('class', 'preset-btn__bolt');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('width', '12');
+        svg.setAttribute('height', '12');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('fill', 'currentColor');
+        path.setAttribute('fill-rule', 'evenodd');
+        path.setAttribute('clip-rule', 'evenodd');
+        path.setAttribute(
+            'd',
+            'M14.6152 1.59492C14.9164 1.76287 15.0643 2.1146 14.9736 2.44734L12.9819 9.75H20.25C20.5486 9.75 20.8188 9.92718 20.9378 10.2011C21.0569 10.475 21.0021 10.7934 20.7983 11.0117L10.2983 22.2617C10.063 22.5139 9.68601 22.573 9.38478 22.4051C9.08354 22.2371 8.93567 21.8854 9.02641 21.5527L11.018 14.25H3.74999C3.45134 14.25 3.18115 14.0728 3.06213 13.7989C2.9431 13.525 2.99792 13.2066 3.20169 12.9883L13.7017 1.73826C13.937 1.48613 14.314 1.42698 14.6152 1.59492Z'
+        );
+        svg.appendChild(path);
+        return svg;
+    }
+
+    /** Visible label for Turbo presets: icon only marks Turbo; text omits the leading "Turbo:" from YAML names. */
+    function turboPresetDisplayText(fullName) {
+        const afterBolt = fullName.replace(/^\s*⚡\s*/, '').trim();
+        const shortened = afterBolt.replace(/^\s*Turbo\s*:\s*/i, '').trim();
+        return shortened || afterBolt;
+    }
+
+    function buildPresetButtonContent(button, fullName) {
+        const inner = document.createElement('span');
+        inner.className = 'preset-btn__inner';
+        if (isTurboPresetName(fullName)) {
+            inner.appendChild(createPresetTurboBoltIcon());
+            const label = document.createElement('span');
+            label.className = 'preset-btn__label';
+            label.textContent = turboPresetDisplayText(fullName);
+            inner.appendChild(label);
+        } else {
+            const label = document.createElement('span');
+            label.className = 'preset-btn__label';
+            label.textContent = fullName;
+            inner.appendChild(label);
+        }
+        button.appendChild(inner);
+    }
+
     function updatePresetVisuals(name) {
         currentPresetName = name;
 
@@ -937,8 +993,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         // Hide "Turbo" presets when Chatterbox-Original is loaded
         let filteredPresets = appPresets;
         if (currentModelInfo && currentModelInfo.type !== 'turbo') {
-            filteredPresets = appPresets.filter(preset =>
-                !preset.name.toLowerCase().startsWith('turbo')
+            filteredPresets = appPresets.filter(
+                (preset) => !isTurboPresetName(preset.name)
             );
         }
 
@@ -960,7 +1016,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             button.className = 'preset-btn';
             button.dataset.name = preset.name;
             button.title = `Load '${preset.name}' preset`;
-            button.textContent = preset.name;
+            buildPresetButtonContent(button, preset.name);
             button.addEventListener('click', () => applyPreset(preset));
             presetsContainer.appendChild(button);
         });
@@ -1056,9 +1112,9 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         // Ensure the container is clean or re-created
         audioPlayerContainer.innerHTML = `
-            <div class="card audio-player">
-                <div class="card__body">
-                    <h2 class="card__title">Generated Audio</h2>
+            <div class="card audio-player output-panel">
+                <div class="card__body output-panel__body">
+                    <h2 class="card__title output-panel__title">Output</h2>
                     <div class="audio-player__waveform" id="waveform"></div>
                     <div class="audio-player__controls">
                         <div class="audio-player__buttons">
@@ -1108,9 +1164,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (playerFileSpan) {
             let fileDetail = '';
             if ((resultDetails.submittedVoiceMode || currentVoiceMode) === 'clone' && resultDetails.submittedCloneFile) {
-                fileDetail = `(<span class="font-medium text-slate-700 dark:text-slate-300">${resultDetails.submittedCloneFile}</span>)`;
+                fileDetail = `(<span class="u-file-name font-medium">${resultDetails.submittedCloneFile}</span>)`;
             } else if ((resultDetails.submittedVoiceMode || currentVoiceMode) === 'predefined' && resultDetails.submittedPredefinedVoice) {
-                fileDetail = `(<span class="font-medium text-slate-700 dark:text-slate-300">${resultDetails.submittedPredefinedVoice}</span>)`;
+                fileDetail = `(<span class="u-file-name font-medium">${resultDetails.submittedPredefinedVoice}</span>)`;
             }
             playerFileSpan.innerHTML = fileDetail;
         }
@@ -1144,7 +1200,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         wavesurfer.on('error', (err) => {
             console.error("WaveSurfer error:", err);
             showNotification(`Error loading audio waveform: ${err.message || err}`, 'error');
-            if (waveformDiv) waveformDiv.innerHTML = `<p class="p-4 text-sm text-red-600 dark:text-red-400">Could not load waveform.</p>`;
+            if (waveformDiv) waveformDiv.innerHTML = `<p class="form-hint" style="color: var(--color-error); padding: var(--space-4);">Could not load waveform.</p>`;
             if (playBtn) playBtn.disabled = true;
         });
 
@@ -1244,9 +1300,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         currentAudioBlobUrl = audioUrl;
 
         audioPlayerContainer.innerHTML = `
-            <div class="card audio-player">
-                <div class="card__body">
-                    <h2 class="card__title">Generated Audio</h2>
+            <div class="card audio-player output-panel">
+                <div class="card__body output-panel__body">
+                    <h2 class="card__title output-panel__title">Output</h2>
                     <audio id="html-stream-audio" class="audio-player__native" controls preload="metadata"></audio>
                     <div class="audio-player__controls">
                         <div class="audio-player__buttons">
@@ -1294,9 +1350,9 @@ document.addEventListener('DOMContentLoaded', async function () {
         if (playerFileSpan) {
             let fileDetail = '';
             if ((resultDetails.submittedVoiceMode || currentVoiceMode) === 'clone' && resultDetails.submittedCloneFile) {
-                fileDetail = `(<span class="font-medium text-slate-700 dark:text-slate-300">${resultDetails.submittedCloneFile}</span>)`;
+                fileDetail = `(<span class="u-file-name font-medium">${resultDetails.submittedCloneFile}</span>)`;
             } else if ((resultDetails.submittedVoiceMode || currentVoiceMode) === 'predefined' && resultDetails.submittedPredefinedVoice) {
-                fileDetail = `(<span class="font-medium text-slate-700 dark:text-slate-300">${resultDetails.submittedPredefinedVoice}</span>)`;
+                fileDetail = `(<span class="u-file-name font-medium">${resultDetails.submittedPredefinedVoice}</span>)`;
             }
             playerFileSpan.innerHTML = fileDetail;
         }
@@ -2021,12 +2077,13 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     }
     async function updateConfigStatus(button, statusElem, message, type = 'info', duration = 5000, enableButtonAfter = true) {
-        const statusClasses = { success: 'text-green-600 dark:text-green-400', error: 'text-red-600 dark:text-red-400', warning: 'text-yellow-600 dark:text-yellow-400', info: 'text-indigo-600 dark:text-indigo-400', processing: 'text-yellow-600 dark:text-yellow-400 animate-pulse' };
+        const statusVariants = { success: 'status-inline--success', error: 'status-inline--error', warning: 'status-inline--warning', info: 'status-inline--info', processing: 'status-inline--processing' };
         const isProcessing = message.toLowerCase().includes('saving') || message.toLowerCase().includes('restarting') || message.toLowerCase().includes('resetting');
         const messageType = isProcessing ? 'processing' : type;
         if (statusElem) {
             statusElem.textContent = message;
-            statusElem.className = `text-xs ml-2 ${statusClasses[messageType] || statusClasses['info']}`;
+            const variant = statusVariants[messageType] || statusVariants.info;
+            statusElem.className = `status-inline ml-2 ${variant}`;
             statusElem.classList.remove('hidden');
         }
         if (button) button.disabled = isProcessing || (type === 'error' && !enableButtonAfter) || (type === 'success' && !enableButtonAfter);

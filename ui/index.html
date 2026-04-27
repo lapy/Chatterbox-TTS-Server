@@ -16,7 +16,10 @@
             <div class="container">
                 <div class="navbar__inner">
                     <div class="navbar__brand">
-                        <a href="/" id="app-title-link" class="navbar__title">Chatterbox TTS Server</a>
+                        <div class="navbar__brand-text">
+                            <a href="/" id="app-title-link" class="navbar__title">Chatterbox TTS Server</a>
+                            <p class="navbar__tagline">Local speech synthesis &amp; voice tools</p>
+                        </div>
                         <div id="model-indicator" class="hidden">
                             <span id="model-badge" class="model-badge">
                                 <span id="model-badge-icon" class="model-badge__indicator"></span>
@@ -48,14 +51,19 @@
         </nav>
 
         <!-- Main Content Area -->
-        <main>
-            <div class="container mt-4">
-                <div id="notification-area" class="mb-6"></div>
+        <main id="main-content" class="main-content" tabindex="-1">
+            <div class="container main-container">
+                <a class="skip-link" href="#tts-form">Skip to main content</a>
+                <div id="notification-area" class="notification-stack"></div>
 
-                <div class="card">
-                    <form id="tts-form" action="#" method="post" onsubmit="return false;">
-                        <div class="card__body">
-                            <h2 id="tts-form-header" class="card__title">Generate Speech</h2>
+                <form id="tts-form" action="#" method="post" onsubmit="return false;" class="tts-form">
+                    <div class="layout-studio">
+                        <div class="layout-studio__primary">
+                            <header class="studio-hero">
+                                <h2 id="tts-form-header" class="studio-hero__title">Create audio</h2>
+                                <p class="studio-hero__lede">Choose a model, add your text, and generate. Long passages
+                                    work best with chunking and a stable voice or fixed seed.</p>
+                            </header>
 
                             <!-- Model Selection Section -->
                             <div id="model-selection-section" class="highlight-box">
@@ -84,10 +92,9 @@
                             </div>
 
                             <div class="form-group">
-                                <label for="text" class="form-label">Text to synthesize</label>
+                                <label for="text" class="form-label">Text</label>
                                 <p class="form-hint mb-2">
-                                    Enter the text you want to convert to speech. For audiobooks, you can paste long
-                                    chapters.
+                                    Paste a script, chapter, or short line—everything goes through the same flow.
                                 </p>
                                 <div class="textarea-wrapper">
                                     <textarea name="text" id="text" rows="8" class="form-textarea"
@@ -132,7 +139,7 @@
                                         <path stroke-linecap="round" stroke-linejoin="round"
                                             d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
                                     </svg>
-                                    Generate Speech
+                                    Generate
                                 </button>
                                 <label for="split-text-toggle" class="checkbox-label">
                                     <input type="checkbox" id="split-text-toggle" name="split_text"
@@ -150,9 +157,14 @@
                                 Splitting is essential for longer texts like articles or audiobook chapters. Recommended
                                 chunk size: ~150-400 characters.
                             </p>
+                        </div>
+                        <aside class="layout-studio__secondary" role="complementary" aria-labelledby="voice-aside-title">
+                            <h3 class="subpanel__title" id="voice-aside-title">Voice &amp; examples</h3>
+                            <p class="subpanel__intro">Server voices or a reference clip, then use a quick preset to
+                                hear the model.</p>
 
                             <div class="form-group">
-                                <label class="form-label mb-2">Voice Mode:</label>
+                                <label class="form-label mb-2">Voice mode</label>
                                 <div class="voice-mode">
                                     <label class="voice-mode__option selected" data-mode="predefined">
                                         <input type="radio" name="voice_mode" value="predefined" class="hidden" checked>
@@ -169,7 +181,7 @@
                                 <label for="predefined-voice-select" class="form-label">Select Predefined Voice:</label>
                                 <div class="flex-row items-center gap-2">
                                     <select id="predefined-voice-select" name="predefined_voice_select"
-                                        class="form-select" style="flex-grow: 1;">
+                                        class="form-select form-select--grow">
                                         <option value="none">-- Select Voice --</option>
                                     </select>
                                     <input type="file" id="predefined-voice-file-input" class="hidden" multiple
@@ -205,7 +217,7 @@
                                 </p>
                                 <div class="flex-row items-center gap-2">
                                     <select id="clone-reference-select" name="clone_reference_select"
-                                        class="form-select" style="flex-grow: 1;">
+                                        class="form-select form-select--grow">
                                         <option value="none">-- Select Reference File --</option>
                                     </select>
                                     <input type="file" id="clone-file-input" class="hidden" multiple accept=".wav,.mp3"
@@ -234,15 +246,18 @@
                             </div>
 
                             <div class="form-group">
-                                <label class="form-label mb-2">Load Example Preset:</label>
+                                <label class="form-label mb-2">Example presets</label>
                                 <div id="presets-container" class="flex-row flex-wrap gap-2">
                                     <p id="presets-placeholder" class="form-hint">Loading presets...</p>
                                 </div>
                             </div>
+                        </aside>
+                    </div>
 
-                            <details class="collapsible" open>
+                    <div class="panel-advanced">
+                            <details class="collapsible collapsible--advanced" open>
                                 <summary class="collapsible__trigger">
-                                    <span>Generation Parameters</span>
+                                    <span>Generation parameters</span>
                                     <svg class="collapsible__icon" viewBox="0 0 20 20" fill="currentColor">
                                         <path fill-rule="evenodd"
                                             d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
@@ -344,7 +359,7 @@
                                 </div>
                             </details>
 
-                            <details class="collapsible" open>
+                            <details class="collapsible collapsible--server" id="server-settings-details">
                                 <summary class="collapsible__trigger">
                                     <span>Server &amp; application configuration</span>
                                     <svg class="collapsible__icon" viewBox="0 0 20 20" fill="currentColor">
@@ -779,43 +794,42 @@
                                     </div>
                                 </div>
                             </details>
-                        </div>
-
-                        <div class="card__footer">
-                            <button id="reset-settings-btn" type="button" class="btn ghost">Reset All Settings</button>
-                            <span class="form-hint ml-2">Resets settings to their defaults.</span>
-                        </div>
-                    </form>
-                </div>
-
-                <div id="audio-player-container" class="mt-8"></div>
-
-                <div class="mt-10">
-                    <h2 class="card__title mb-4">Tips & Tricks</h2>
-                    <div class="card">
-                        <div class="card__body">
-                            <ul class="tips-list">
-                                <li>For <strong>Audiobooks</strong>, use <strong>MP3</strong> format, enable
-                                    <strong>Split text</strong>, and set a chunk size of ~250-500.
-                                </li>
-                                <li>Use <strong>Predefined Voices</strong> for consistent, high-quality output. You can
-                                    import new ones.</li>
-                                <li>For <strong>Voice Cloning</strong>, upload clean reference audio (<code
-                                        class="code">.wav</code>/<code class="code">.mp3</code>). Quality of reference
-                                    is key.</li>
-                                <li>Experiment with <strong>Temperature</strong> and other generation parameters to
-                                    fine-tune output.</li>
-                                <li>Adjusting <strong>Speed Factor</strong> away from 1.0 is experimental and may cause
-                                    echo.</li>
-                                <li>When using <strong>Turbo</strong> model, you can insert paralinguistic tags like
-                                    <code class="code">[laugh]</code> or <code class="code">[sigh]</code> for natural
-                                    vocal reactions.
-                                </li>
-                                <li>Check the <code class="code">/docs</code> endpoint for API details.</li>
-                            </ul>
-                        </div>
                     </div>
-                </div>
+
+                    <div class="form-footer">
+                        <div class="form-footer__actions">
+                            <button id="reset-settings-btn" type="button" class="btn ghost">Reset all to defaults</button>
+                        </div>
+                        <p class="form-footer__hint">Restores the form and saved defaults. Server config is only changed
+                            if you saved it in the section above.</p>
+                    </div>
+                </form>
+
+                <div id="audio-player-container" class="audio-out"></div>
+
+                <details class="help-drawer">
+                    <summary class="help-drawer__summary">Tips &amp; resources</summary>
+                    <div class="help-drawer__body">
+                        <ul class="tips-list">
+                            <li>For <strong>audiobooks</strong>, use <strong>MP3</strong>, turn on
+                                <strong>split text</strong>, and try chunk size ~250–500 characters.
+                            </li>
+                            <li><strong>Predefined voices</strong> keep timbre consistent; import your own samples when
+                                needed.</li>
+                            <li><strong>Voice cloning</strong> needs clean <code class="code">.wav</code> or
+                                <code class="code">.mp3</code> reference audio.
+                            </li>
+                            <li>Tune <strong>temperature</strong> and other sliders under generation parameters;
+                                <strong>speed factor</strong> ≠ 1.0 is experimental and may add artifacts.
+                            </li>
+                            <li>With <strong>Turbo</strong>, tags like <code class="code">[laugh]</code> and
+                                <code class="code">[sigh]</code> add natural reactions.
+                            </li>
+                            <li>Integrate via the <a href="/docs" class="help-drawer__link" target="_blank"
+                                    rel="noopener">OpenAPI docs</a> at <code class="code">/docs</code>.</li>
+                        </ul>
+                    </div>
+                </details>
             </div>
         </main>
 

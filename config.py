@@ -140,7 +140,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "lossy_multichunk_leading_pad_sec": 2.50,
             # Flush silence appended before closing lossy encoders.
             "lossy_trailing_flush_sec": 0.10,
-            # Additional Opus preroll for multi-chunk compressed streaming.
+            # Minimum leading silence (seconds) for multi-chunk Opus streaming (SSE and direct audio).
             "streaming_opus_preroll_sec": 2.50,
             # Minimum PCM fed to libmp3lame in compressed streaming.
             "streaming_mp3_min_pcm_sec": 2.60,

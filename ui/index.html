@@ -568,53 +568,69 @@
                                                 </section>
                                                 <!-- Audio output -->
                                                 <section class="config-tabs__panel" data-panel="audio" role="tabpanel">
-                                                    <div class="form-grid">
+                                                    <p class="form-hint mb-4">File defaults, reference limits, and <strong>codec timing</strong> for MP3/Opus. Timing keys match <code class="code">config.yaml</code> under <code class="code">audio_output.codec_timing</code>.</p>
+                                                    <div class="form-grid config-grid--audio">
+                                                        <div class="config-subsection form-grid__full">
+                                                            <h4 class="config-subsection__title" id="config-audio-sect-general">General output</h4>
+                                                            <p class="config-subsection__lede">Default response format, engine sample rate, and cloning reference cap.</p>
+                                                        </div>
                                                         <div class="form-group">
-                                                            <label for="config-audio_output-format" class="form-label small">Default audio format</label>
-                                                            <input type="text" id="config-audio_output-format" name="audio_output.format" class="form-input small" placeholder="wav">
+                                                            <label for="config-audio_output-format" class="form-label small">Default format</label>
+                                                            <input type="text" id="config-audio_output-format" name="audio_output.format" class="form-input small" placeholder="wav" aria-describedby="config-audio-sect-general">
                                                         </div>
                                                         <div class="form-group">
                                                             <label for="config-audio_output-sample_rate" class="form-label small">Sample rate (Hz)</label>
                                                             <input type="number" id="config-audio_output-sample_rate" name="audio_output.sample_rate" class="form-input small" min="8000" step="1">
                                                         </div>
                                                         <div class="form-group">
-                                                            <label for="config-audio_output-max_reference_duration_sec" class="form-label small">Max reference duration (sec)</label>
+                                                            <label for="config-audio_output-max_reference_duration_sec" class="form-label small">Max reference audio (seconds)</label>
                                                             <input type="number" id="config-audio_output-max_reference_duration_sec" name="audio_output.max_reference_duration_sec" class="form-input small" min="1">
                                                         </div>
-                                                        <div class="form-group">
+                                                        <div class="form-group form-grid__full">
                                                             <label for="config-audio_output-save_to_disk" class="checkbox-label">
                                                                 <input type="checkbox" id="config-audio_output-save_to_disk" name="audio_output.save_to_disk" class="form-checkbox">
-                                                                <span>Save generated audio to disk</span>
+                                                                <span>Save generated files to the server output directory</span>
                                                             </label>
                                                         </div>
-                                                        <div class="form-group form-grid__full">
-                                                            <p class="form-hint mb-0">
-                                                                Codec timing policy for MP3/Opus priming, encoder flush, and compressed streaming. These values affect generated audio timing and streaming compatibility.
-                                                            </p>
+
+                                                        <div class="config-subsection form-grid__full">
+                                                            <h4 class="config-subsection__title" id="config-audio-sect-encode">MP3 / Opus: lead &amp; tail</h4>
+                                                            <p class="config-subsection__lede">Silence (seconds) at the <strong>start</strong> and <strong>end</strong> of lossy encodes. Reduces cut-off speech and helps encoders finish frames. Used for buffered and streamed output per <code class="code">audio_output.py</code> policy.</p>
                                                         </div>
                                                         <div class="form-group">
-                                                            <label for="config-audio_output-codec_timing-lossy_short_leading_pad_sec" class="form-label small">Lossy short leading pad (sec)</label>
-                                                            <input type="number" id="config-audio_output-codec_timing-lossy_short_leading_pad_sec" name="audio_output.codec_timing.lossy_short_leading_pad_sec" class="form-input small" min="0" max="10" step="0.01">
+                                                            <label for="config-audio_output-codec_timing-lossy_short_leading_pad_sec" class="form-label small">Short leading silence</label>
+                                                            <p class="form-hint">Seconds of silence before encoding for normal / single-chunk / low-latency cases.</p>
+                                                            <input type="number" id="config-audio_output-codec_timing-lossy_short_leading_pad_sec" name="audio_output.codec_timing.lossy_short_leading_pad_sec" class="form-input small" min="0" max="10" step="0.01" aria-describedby="config-audio-sect-encode">
                                                         </div>
                                                         <div class="form-group">
-                                                            <label for="config-audio_output-codec_timing-lossy_multichunk_leading_pad_sec" class="form-label small">Streaming multi-chunk leading pad (sec)</label>
+                                                            <label for="config-audio_output-codec_timing-lossy_multichunk_leading_pad_sec" class="form-label small">Multi-chunk leading silence</label>
+                                                            <p class="form-hint">Larger lead for multi-chunk <strong>SSE</strong> streaming (heavier guard than direct audio).</p>
                                                             <input type="number" id="config-audio_output-codec_timing-lossy_multichunk_leading_pad_sec" name="audio_output.codec_timing.lossy_multichunk_leading_pad_sec" class="form-input small" min="0" max="10" step="0.01">
                                                         </div>
                                                         <div class="form-group">
-                                                            <label for="config-audio_output-codec_timing-lossy_trailing_flush_sec" class="form-label small">Lossy trailing flush (sec)</label>
+                                                            <label for="config-audio_output-codec_timing-lossy_trailing_flush_sec" class="form-label small">Trailing silence (encoder flush)</label>
+                                                            <p class="form-hint">Silence appended before closing the encoder so the last frame completes.</p>
                                                             <input type="number" id="config-audio_output-codec_timing-lossy_trailing_flush_sec" name="audio_output.codec_timing.lossy_trailing_flush_sec" class="form-input small" min="0" max="5" step="0.01">
                                                         </div>
+
+                                                        <div class="config-subsection form-grid__full">
+                                                            <h4 class="config-subsection__title" id="config-audio-sect-stream">Chunked streaming (MP3 / Opus)</h4>
+                                                            <p class="config-subsection__lede">When responses are <strong>streamed</strong> in multiple text chunks. Does not apply to a single buffer download.</p>
+                                                        </div>
                                                         <div class="form-group">
-                                                            <label for="config-audio_output-codec_timing-streaming_opus_preroll_sec" class="form-label small">Streaming Opus preroll (sec)</label>
+                                                            <label for="config-audio_output-codec_timing-streaming_inter_chunk_gap_sec" class="form-label small">Gap between speech chunks</label>
+                                                            <p class="form-hint">PCM silence inserted between separately synthesized segments.</p>
+                                                            <input type="number" id="config-audio_output-codec_timing-streaming_inter_chunk_gap_sec" name="audio_output.codec_timing.streaming_inter_chunk_gap_sec" class="form-input small" min="0" max="2" step="0.01" aria-describedby="config-audio-sect-stream">
+                                                        </div>
+                                                        <div class="form-group">
+                                                            <label for="config-audio_output-codec_timing-streaming_opus_preroll_sec" class="form-label small">Opus minimum lead (preroll)</label>
+                                                            <p class="form-hint">Floor on leading silence for <strong>multi-chunk</strong> Opus (SSE and direct audio); helps Ogg/Opus decoders prime.</p>
                                                             <input type="number" id="config-audio_output-codec_timing-streaming_opus_preroll_sec" name="audio_output.codec_timing.streaming_opus_preroll_sec" class="form-input small" min="0" max="10" step="0.01">
                                                         </div>
                                                         <div class="form-group">
-                                                            <label for="config-audio_output-codec_timing-streaming_mp3_min_pcm_sec" class="form-label small">Streaming MP3 min PCM (sec)</label>
+                                                            <label for="config-audio_output-codec_timing-streaming_mp3_min_pcm_sec" class="form-label small">MP3 minimum PCM length</label>
+                                                            <p class="form-hint">Extra padding so <code class="code">libmp3lame</code> outputs bytes on very short lines.</p>
                                                             <input type="number" id="config-audio_output-codec_timing-streaming_mp3_min_pcm_sec" name="audio_output.codec_timing.streaming_mp3_min_pcm_sec" class="form-input small" min="0" max="10" step="0.01">
-                                                        </div>
-                                                        <div class="form-group">
-                                                            <label for="config-audio_output-codec_timing-streaming_inter_chunk_gap_sec" class="form-label small">Streaming inter-chunk gap (sec)</label>
-                                                            <input type="number" id="config-audio_output-codec_timing-streaming_inter_chunk_gap_sec" name="audio_output.codec_timing.streaming_inter_chunk_gap_sec" class="form-input small" min="0" max="2" step="0.01">
                                                         </div>
                                                     </div>
                                                 </section>

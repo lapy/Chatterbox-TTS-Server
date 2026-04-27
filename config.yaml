@@ -75,23 +75,32 @@ text_processing:
 request_limits:
   max_text_chars: 20000
 ui_state:
-  last_text: "You think you've won, don't you? Standing there with your righteous\
-    \ sword and your noble heart. How delightfully naive. I've been playing this game\
-    \ since before your grandmother's grandmother was a whisper in the wind. Every\
-    \ move you've made, every clever plan, every supposed victory \u2014 all pieces\
-    \ on my board, my dear hero. You see a villain who lost. I see a centuries-old\
-    \ design finally coming to fruition. The curse you think you've broken? It was\
-    \ merely the lock. And you, sweet child, have just handed me the key. Now, if\
-    \ you'll excuse me, I have a kingdom to reshape in my image. Don't look so surprised.\
-    \ In every story, someone has to play the monster. I simply chose to be the very\
-    \ best.\n"
+  last_text: '[gasp] Okay, we have fifteen minutes left! Fifteen minutes! [groan]
+    How have we been in here for forty-five minutes and only solved two puzzles?!
+    [clear throat] Let''s think logically. [sniff] This room smells like fear and
+    bad decisions. [cough] And also someone''s very strong cologne, Kevin. [sigh]
+    Okay, the clue says "the answer lies where time stands still." [chuckle] Great,
+    very helpful, very straightforward. [shush] Everyone stop talking for one second!
+    [gasp] Wait, the clock on the wall! It''s stuck at three fifteen! [laugh] That''s
+    it! That has to be it! [groan] It''s not the combination. Of course it''s not
+    the combination. [sniff] Why would anything in this room be logical? [sigh] Has
+    anyone checked under the carpet? [gasp] There''s a hidden compartment! [chuckle]
+    Kevin, you''re standing on a clue! Classic Kevin! [clear throat] Okay, it''s another
+    riddle. "What has keys but no locks, space but no room, and you can enter but
+    can''t go inside?" [groan] Who writes these things?! [cough] A keyboard! It''s
+    a keyboard! [laugh] There''s a keyboard painted on the wall! [gasp] Eight minutes!
+    We have eight minutes! [sigh] If we don''t escape this room, we''re never speaking
+    of this again. [shush] Focus, everyone! [chuckle] We''re so close I can taste
+    freedom! [sniff] That or more of Kevin''s cologne!
+
+    '
   last_voice_mode: predefined
   last_predefined_voice: Olivia.wav
   last_reference_file: none
-  last_seed: 666
+  last_seed: 0
   last_chunk_size: 200
   last_split_text_enabled: true
-  last_temperature: 0.8
+  last_temperature: 1.3
   last_exaggeration: 1.3
   last_cfg_weight: 0.6
   last_language: en
@@ -102,7 +111,7 @@ ui_state:
   hide_chunk_warning: false
   hide_generation_warning: true
   theme: dark
-  last_preset_name: Fairy Tale Villain Monologue
+  last_preset_name: "\u26A1 Turbo: Escape Room Panic"
 ui:
   title: Chatterbox TTS Server
   show_language_select: true

@@ -37,7 +37,7 @@ def test_audio_output_policy_multichunk_streaming_opus_preroll():
 
     assert policy.is_compressed_streaming
     assert policy.timing.leading_pad_sec == utils.LOSSY_ENCODE_SHORT_LEADING_PAD_SEC
-    assert policy.timing.streaming_opus_preroll_sec == 0.0
+    assert policy.timing.streaming_opus_preroll_sec == utils.LOSSY_ENCODE_LEADING_PAD_SEC
 
 
 def test_audio_output_policy_multichunk_sse_opus_keeps_preroll():

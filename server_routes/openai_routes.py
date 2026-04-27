@@ -62,17 +62,46 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Req
         request.model,
         len(request.input_ or ""),
     )
+    try:
+        utils.validate_request_text_length(request.input_, field_name="input")
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     predefined_voices_path = get_predefined_voices_path(ensure_absolute=True)
     reference_audio_path = get_reference_audio_path(ensure_absolute=True)
-    voice_path_predefined = predefined_voices_path / request.voice
-    voice_path_reference = reference_audio_path / request.voice
+    audio_prompt_path = None
 
-    if voice_path_predefined.is_file():
+    try:
+        voice_path_predefined = utils.resolve_file_under_directory(
+            predefined_voices_path,
+            request.voice,
+            allowed_suffixes={".wav", ".mp3"},
+        )
         audio_prompt_path = voice_path_predefined
-    elif voice_path_reference.is_file():
-        audio_prompt_path = voice_path_reference
-    else:
+    except FileNotFoundError:
+        try:
+            voice_path_reference = utils.resolve_file_under_directory(
+                reference_audio_path,
+                request.voice,
+                allowed_suffixes={".wav", ".mp3"},
+            )
+            max_dur = config_manager.get_int("audio_output.max_reference_duration_sec", 30)
+            is_valid, msg = utils.validate_reference_audio(voice_path_reference, max_dur)
+            if not is_valid:
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid reference audio: {msg}"
+                )
+            audio_prompt_path = voice_path_reference
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404, detail=f"Voice file '{request.voice}' not found."
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if audio_prompt_path is None:
         raise HTTPException(
             status_code=404, detail=f"Voice file '{request.voice}' not found."
         )

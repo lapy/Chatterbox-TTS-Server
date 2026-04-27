@@ -1,8 +1,8 @@
 FROM docker.io/nvidia/cuda:12.8.1-runtime-ubuntu22.04
 
 ARG RUNTIME=nvidia
-# Pinned chatterbox-v2 revision (see chatterbox_v2.ref). Override at build time if needed.
-ARG CHATTERBOX_GIT_REF=cc0357396d9c73fc1e6c544ee40bb596020edd09
+# Pinned resemble-ai/chatterbox (see chatterbox_pip.txt). Override at build time if needed.
+ARG CHATTERBOX_GIT_REF=59bc590b3cad826e5d5987745bf6844627a21ad5
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -44,7 +44,7 @@ RUN pip3 install --no-cache-dir --upgrade pip && \
     if [ "$RUNTIME" = "nvidia" ]; then \
         pip3 install --no-cache-dir -r requirements-nvidia.txt; \
     fi && \
-    pip3 install --no-cache-dir --no-deps git+https://github.com/devnen/chatterbox-v2.git@${CHATTERBOX_GIT_REF} s3tokenizer==0.3.0 onnx==1.16.0 && \
+    pip3 install --no-cache-dir --no-deps git+https://github.com/resemble-ai/chatterbox.git@${CHATTERBOX_GIT_REF} s3tokenizer==0.3.0 onnx==1.16.0 && \
     pip3 install --no-cache-dir "protobuf>=4.25.0"
 # Copy the rest of the application code
 COPY . .
@@ -54,6 +54,8 @@ RUN mkdir -p model_cache reference_audio outputs voices logs hf_cache
 
 # Expose the port the application will run on
 EXPOSE 8004
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/ready', timeout=5).read()" || exit 1
 
 # Command to run the application
 CMD ["python3", "server.py"]

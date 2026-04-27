@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides instructions for running Chatterbox TTS Server with **CUDA 12.8 and PyTorch 2.8.0**, which includes support for the new **RTX 5090 and Blackwell architecture (sm_120)** GPUs.
+This guide covers **CUDA 12.8 (cu128) / PyTorch 2.9.x** for **RTX 50 / Blackwell (sm_120)**. The default NVIDIA install uses **cu124 + torch 2.6** from `requirements-nvidia.txt` (Resemble-aligned); use this file when you need **sm_120** support.
 
 ## Who Needs This?
 
@@ -11,7 +11,7 @@ Use the CUDA 12.8 configuration if you have:
 - CUDA compute capability **sm_120** or newer
 - CUDA 12.8+ drivers installed on your system (driver version 570+)
 
-**For older GPUs (RTX 20/30/40 series)**, continue using the standard NVIDIA configuration with CUDA 12.1.
+**For older GPUs (RTX 20/30/40 / Ada)**, use the standard **`--nvidia`** / `requirements-nvidia.txt` stack (PyTorch **2.6.0+cu124**), not this guide.
 
 ## Quick Start (Recommended)
 
@@ -113,12 +113,11 @@ source venv/bin/activate
 # Upgrade pip
 pip install --upgrade pip
 
-# Install dependencies (PyTorch 2.8.0 + other requirements)
+# Install dependencies (PyTorch 2.9.0+cu128 + Resemble-aligned ML stack)
 pip install -r requirements-nvidia-cu128.txt
 
-# IMPORTANT: Install Chatterbox separately with --no-deps
-# This prevents PyTorch from being downgraded
-pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+# IMPORTANT: Install Chatterbox separately with --no-deps + s3tokenizer + onnx (see README)
+pip install --no-deps git+https://github.com/resemble-ai/chatterbox.git@59bc590b3cad826e5d5987745bf6844627a21ad5 s3tokenizer==0.3.0 onnx==1.16.0
 
 # Start the server
 python server.py
@@ -139,7 +138,7 @@ python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA Av
 
 Expected output should include:
 ```
-PyTorch: 2.8.0+cu128
+PyTorch: 2.9.0+cu128
 CUDA Available: True
 GPU: NVIDIA GeForce RTX 5090
 Supported Architectures: ['sm_70', 'sm_75', 'sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_120']
@@ -149,16 +148,15 @@ Look for **`sm_120`** in the supported architectures list - this confirms Blackw
 
 ## What's Different from Standard Installation?
 
-The CUDA 12.8 configuration differs from the standard CUDA 12.1 setup:
+The CUDA 12.8 configuration differs from the **standard** (`requirements-nvidia.txt`, **cu124**) install:
 
-| Aspect | CUDA 12.1 (Standard) | CUDA 12.8 (Blackwell) |
+| Aspect | Standard (`--nvidia`, cu124) | CUDA 12.8 (Blackwell) |
 |--------|---------------------|----------------------|
-| PyTorch Version | 2.5.1 | 2.8.0 |
-| CUDA Version | 12.1 | 12.8 |
-| Blackwell Support | ❌ No | ✅ Yes (sm_120) |
+| PyTorch Version | 2.6.0 + cu124 | 2.9.0 + cu128 |
+| Blackwell (sm_120) | ❌ No | ✅ Yes |
 | Requirements File | requirements-nvidia.txt | requirements-nvidia-cu128.txt |
-| Chatterbox Install | Included in requirements | Separate with --no-deps |
-| Driver Requirement | 525+ | 570+ |
+| Chatterbox / ML deps | Same as resemble-ai/chatterbox 0.1.7 (explicit in each file) | Same |
+| Driver (typical) | 550+ (CUDA 12.4 user runtime) | 570+ |
 
 ## Prerequisites
 
@@ -192,7 +190,7 @@ This error means PyTorch doesn't support your GPU's compute capability. This typ
    ```bash
    python -c "import torch; print(torch.__version__)"
    ```
-   Should show `2.8.0+cu128` or similar with `cu128`.
+   Should show `2.9.0` with `cu128` in the build string.
 
 2. **PyTorch was downgraded** - This can happen if Chatterbox was installed without `--no-deps`. Reinstall:
    ```bash
@@ -200,8 +198,8 @@ This error means PyTorch doesn't support your GPU's compute capability. This typ
    python start.py --reinstall --nvidia-cu128
    
    # Or manually
-   pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
-   pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09
+   pip install -r requirements-nvidia-cu128.txt
+   pip install --no-deps git+https://github.com/resemble-ai/chatterbox.git@59bc590b3cad826e5d5987745bf6844627a21ad5
    ```
 
 3. **Check supported architectures**:
@@ -258,12 +256,10 @@ Subsequent starts will be much faster.
 
 ## Compatibility Matrix
 
-| GPU Generation | Architecture | Compute Capability | Installation Option | PyTorch Version |
+| GPU Generation | Architecture | Compute Capability | Installation Option | PyTorch (this repo) |
 |----------------|--------------|-------------------|---------------------|-----------------|
-| RTX 5090 / Blackwell | Blackwell | sm_120 | `--nvidia-cu128` | 2.8.0+cu128 |
-| RTX 4090 / Ada | Ada Lovelace | sm_89 | `--nvidia` | 2.5.1+cu121 |
-| RTX 3090 / Ampere | Ampere | sm_86 | `--nvidia` | 2.5.1+cu121 |
-| RTX 2080 / Turing | Turing | sm_75 | `--nvidia` | 2.5.1+cu121 |
+| RTX 50 / Blackwell | Blackwell | sm_120 | `--nvidia-cu128` | 2.9.0+cu128 |
+| RTX 20/30/40 / 4090 | various | < sm_120 | `--nvidia` | 2.6.0+cu124 |
 
 ## Performance Notes
 
@@ -292,13 +288,13 @@ python start.py --reinstall --nvidia-cu128
 
 ## Switching Between CUDA Versions
 
-### From CUDA 12.1 to CUDA 12.8
+### From standard (cu124) to CUDA 12.8 (Blackwell)
 
 ```bash
 python start.py --reinstall --nvidia-cu128
 ```
 
-### From CUDA 12.8 to CUDA 12.1
+### From CUDA 12.8 back to standard (cu124)
 
 ```bash
 python start.py --reinstall --nvidia
@@ -316,7 +312,7 @@ docker compose down
 docker compose -f docker-compose-cu128.yml up -d
 ```
 
-### Switch back to CUDA 12.1
+### Switch back to default `docker compose` (cu124 / standard image)
 
 ```bash
 # Stop CUDA 12.8 container

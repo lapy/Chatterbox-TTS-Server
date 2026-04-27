@@ -83,6 +83,11 @@ async def custom_tts_endpoint(
         cuda_sync=config_manager.get_bool("server.performance_cuda_sync", False),
     )
     perf_monitor.record("TTS request received")
+    try:
+        utils.validate_request_text_length(request.text)
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+
     requested_output_format = request.output_format if request.output_format else get_audio_output_format()
     logger.info(
         "TTS request intake: endpoint=/tts request_id=%s streaming=%s "
@@ -120,13 +125,20 @@ async def custom_tts_endpoint(
                 detail="Missing 'predefined_voice_id' for 'predefined' voice mode.",
             )
         voices_dir = get_predefined_voices_path(ensure_absolute=True)
-        potential_path = voices_dir / request.predefined_voice_id
-        if not potential_path.is_file():
-            logger.error(f"Predefined voice file not found: {potential_path}")
+        try:
+            potential_path = utils.resolve_file_under_directory(
+                voices_dir,
+                request.predefined_voice_id,
+                allowed_suffixes={".wav", ".mp3"},
+            )
+        except FileNotFoundError:
+            logger.error("Predefined voice file not found: %s", request.predefined_voice_id)
             raise HTTPException(
                 status_code=404,
                 detail=f"Predefined voice file '{request.predefined_voice_id}' not found.",
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         audio_prompt_path_for_engine = potential_path
         logger.info(f"Using predefined voice: {request.predefined_voice_id}")
 
@@ -137,15 +149,23 @@ async def custom_tts_endpoint(
                 detail="Missing 'reference_audio_filename' for 'clone' voice mode.",
             )
         ref_dir = get_reference_audio_path(ensure_absolute=True)
-        potential_path = ref_dir / request.reference_audio_filename
-        if not potential_path.is_file():
+        try:
+            potential_path = utils.resolve_file_under_directory(
+                ref_dir,
+                request.reference_audio_filename,
+                allowed_suffixes={".wav", ".mp3"},
+            )
+        except FileNotFoundError:
             logger.error(
-                f"Reference audio file for cloning not found: {potential_path}"
+                "Reference audio file for cloning not found: %s",
+                request.reference_audio_filename,
             )
             raise HTTPException(
                 status_code=404,
                 detail=f"Reference audio file '{request.reference_audio_filename}' not found.",
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         max_dur = config_manager.get_int("audio_output.max_reference_duration_sec", 30)
         is_valid, msg = utils.validate_reference_audio(potential_path, max_dur)
         if not is_valid:

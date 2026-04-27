@@ -270,13 +270,35 @@ def _finalize_stitched_tts_audio(
                 )
             chunks.append(processed)
 
-        result = chunks[0]
-        for i in range(1, len(chunks)):
-            silence = np.zeros(silence_buffer_samples, dtype=np.float32)
-            result = _crossfade_with_overlap(result, silence, fade_samples)
-            result = _crossfade_with_overlap(result, chunks[i], fade_samples)
+        # Avoid repeated np.concatenate growth for normal speech chunks. Very short
+        # chunks fall back to the simple implementation because the overlap size is
+        # dynamically clamped in _crossfade_with_overlap.
+        if fade_samples > 0 and all(len(chunk) >= fade_samples for chunk in chunks):
+            fade_out, fade_in = _generate_equal_power_curves(fade_samples)
+            total_len = (
+                sum(len(chunk) for chunk in chunks)
+                + (len(chunks) - 1) * silence_buffer_samples
+                - (len(chunks) - 1) * fade_samples * 2
+            )
+            result = np.zeros(total_len, dtype=np.float32)
+            cursor = len(chunks[0])
+            result[:cursor] = chunks[0]
+            for chunk in chunks[1:]:
+                result[cursor - fade_samples : cursor] *= fade_out
+                cursor = cursor + silence_buffer_samples - fade_samples
+                result[cursor - fade_samples : cursor] += chunk[:fade_samples] * fade_in
+                next_cursor = cursor + len(chunk) - fade_samples
+                result[cursor:next_cursor] = chunk[fade_samples:]
+                cursor = next_cursor
+            final_audio_np = result[:cursor]
+        else:
+            result = chunks[0]
+            for chunk in chunks[1:]:
+                silence = np.zeros(silence_buffer_samples, dtype=np.float32)
+                result = _crossfade_with_overlap(result, silence, fade_samples)
+                result = _crossfade_with_overlap(result, chunk, fade_samples)
+            final_audio_np = result
 
-        final_audio_np = result
         logger.info(
             f"{log_prefix}: smart stitching — {len(chunks)} chunks, "
             f"{CROSSFADE_MS}ms crossfades, {SENTENCE_PAUSE_MS}ms pauses"

@@ -28,6 +28,35 @@ def test_tts_returns_wav(client, voice_file):
     assert len(r.content) > 100
 
 
+def test_tts_rejects_voice_path_traversal(client):
+    r = client.post(
+        "/tts",
+        json={
+            "text": "Hello there",
+            "voice_mode": "predefined",
+            "predefined_voice_id": "../config.yaml",
+            "output_format": "wav",
+            "split_text": False,
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_tts_rejects_oversized_text(client, monkeypatch):
+    monkeypatch.setattr("utils.config_manager.get_int", lambda key, default=0: 5)
+    r = client.post(
+        "/tts",
+        json={
+            "text": "too long",
+            "voice_mode": "predefined",
+            "predefined_voice_id": "missing.wav",
+            "output_format": "wav",
+            "split_text": False,
+        },
+    )
+    assert r.status_code == 413
+
+
 def test_tts_rejects_stream_wav(client, voice_file):
     r = client.post(
         "/tts",
@@ -106,6 +135,54 @@ def test_openai_speech_wav(client, voice_file):
     assert len(r.content) > 100
 
 
+def test_openai_speech_rejects_voice_path_traversal(client):
+    r = client.post(
+        "/v1/audio/speech",
+        json={
+            "model": "tts-1",
+            "input": "Hello OpenAI",
+            "voice": "../config.yaml",
+            "response_format": "wav",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_openai_speech_validates_reference_audio(client, tmp_path, monkeypatch):
+    ref = tmp_path / "reference_audio" / "too_long.wav"
+    ref.write_bytes(b"RIFF")
+    monkeypatch.setattr(
+        "server_routes.openai_routes.utils.validate_reference_audio",
+        lambda *_args, **_kwargs: (False, "too long"),
+    )
+
+    r = client.post(
+        "/v1/audio/speech",
+        json={
+            "model": "tts-1",
+            "input": "Hello OpenAI",
+            "voice": "too_long.wav",
+            "response_format": "wav",
+        },
+    )
+    assert r.status_code == 400
+    assert "Invalid reference audio" in r.json()["detail"]
+
+
+def test_openai_speech_rejects_oversized_input(client, monkeypatch):
+    monkeypatch.setattr("utils.config_manager.get_int", lambda key, default=0: 5)
+    r = client.post(
+        "/v1/audio/speech",
+        json={
+            "model": "tts-1",
+            "input": "too long",
+            "voice": "missing.wav",
+            "response_format": "wav",
+        },
+    )
+    assert r.status_code == 413
+
+
 def test_openai_speech_sse_pcm_contract(client, voice_file):
     r = client.post(
         "/v1/audio/speech",
@@ -165,3 +242,11 @@ def test_openai_speech_voice_missing(client):
         },
     )
     assert r.status_code == 404
+
+
+def test_ui_initial_data_redacts_secrets(client):
+    r = client.get("/api/ui/initial-data")
+    assert r.status_code == 200
+    config = r.json()["config"]
+    assert config["server"]["auth_password"] == ""
+    assert config["asr"]["access_token"] == ""

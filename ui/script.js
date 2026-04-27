@@ -1940,8 +1940,8 @@ document.addEventListener('DOMContentLoaded', async function () {
             "tts_engine.predefined_voices_path": currentConfig.tts_engine?.predefined_voices_path,
             "tts_engine.reference_audio_path": currentConfig.tts_engine?.reference_audio_path,
             "tts_engine.chunk_batch_size": currentConfig.tts_engine?.chunk_batch_size,
-            "tts_engine.parallel_chunk_workers": currentConfig.tts_engine?.parallel_chunk_workers,
             "tts_engine.chunk_quality_max_retries": currentConfig.tts_engine?.chunk_quality_max_retries,
+            "request_limits.max_text_chars": currentConfig.request_limits?.max_text_chars,
             "paths.model_cache": currentConfig.paths?.model_cache,
             "paths.output": currentConfig.paths?.output,
             "asr.openai_compatible_base_url": currentConfig.asr?.openai_compatible_base_url,
@@ -2042,10 +2042,17 @@ document.addEventListener('DOMContentLoaded', async function () {
                 'ui_state.last_reference_file',
                 'ui_state.last_model_repo_id',
             ]);
+            const writeOnlySecretNames = new Set([
+                'server.auth_password',
+                'asr.access_token',
+            ]);
             const inputs = serverConfigForm.querySelectorAll(
                 'input[name]:not([readonly]), select[name]:not([readonly]), textarea[name]:not([readonly])'
             );
             inputs.forEach(input => {
+                if (writeOnlySecretNames.has(input.name) && input.value === '') {
+                    return;
+                }
                 const keys = input.name.split('.'); let currentLevel = configDataToSave;
                 keys.forEach((key, index) => {
                     if (index === keys.length - 1) {

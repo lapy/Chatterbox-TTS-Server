@@ -121,6 +121,55 @@ def sanitize_filename(filename: str) -> str:
     return sanitized
 
 
+def resolve_file_under_directory(
+    base_dir: Path,
+    requested_name: str,
+    *,
+    allowed_suffixes: Optional[Set[str]] = None,
+) -> Path:
+    """
+    Resolve a user-selected file name under ``base_dir`` and reject traversal.
+
+    The API accepts filenames from dropdowns and OpenAI-compatible ``voice``
+    fields. Treat those as untrusted even when they usually come from the UI.
+    """
+    if not requested_name or not str(requested_name).strip():
+        raise ValueError("Missing filename.")
+
+    if allowed_suffixes:
+        suffix = Path(requested_name).suffix.lower()
+        normalized_suffixes = {s.lower() for s in allowed_suffixes}
+        if suffix not in normalized_suffixes:
+            raise ValueError(
+                f"Invalid file type '{suffix or '<none>'}'. Allowed types: "
+                f"{', '.join(sorted(normalized_suffixes))}."
+            )
+
+    base_resolved = base_dir.resolve()
+    candidate = (base_resolved / requested_name).resolve(strict=False)
+    try:
+        candidate.relative_to(base_resolved)
+    except ValueError as exc:
+        raise ValueError("Filename escapes the configured directory.") from exc
+
+    if not candidate.is_file():
+        raise FileNotFoundError(str(candidate))
+    return candidate
+
+
+def get_max_request_text_chars() -> int:
+    """Return the configured request text limit, clamped to a sane minimum."""
+    return max(1, config_manager.get_int("request_limits.max_text_chars", 20000))
+
+
+def validate_request_text_length(text: str, *, field_name: str = "text") -> None:
+    max_chars = get_max_request_text_chars()
+    if len(text or "") > max_chars:
+        raise ValueError(
+            f"'{field_name}' exceeds the configured limit of {max_chars} characters."
+        )
+
+
 # --- Constants for Text Processing ---
 # Set of common abbreviations to help with sentence splitting.
 ABBREVIATIONS: Set[str] = {
@@ -847,6 +896,24 @@ def derive_chunk_retry_seed(base_seed: int, chunk_index: int, retry_index: int) 
     mixed = (
         int(base_seed) + int(chunk_index) * 9973 + int(retry_index) * 7919
     ) & 0x7FFFFFFF
+    return mixed if mixed != 0 else 1
+
+
+def derive_chunk_synthesis_seed(base_seed: int, chunk_index: int) -> int:
+    """
+    Per-chunk PRNG seed for a single long document split into multiple engine calls.
+
+    If the user sets a non-zero global seed, we used to call ``set_seed`` with
+    that same value before every chunk, resetting the RNG to identical state each
+    time. That can make consecutive chunks start with correlated samples and
+    *sound* like repeated phrases. Chunk 1 keeps the user's seed; chunk 2+ use a
+    deterministic offset so the run stays reproducible but not chunk-identical.
+    """
+    if base_seed == 0:
+        return 0
+    if int(chunk_index) <= 1:
+        return int(base_seed)
+    mixed = (int(base_seed) + int(chunk_index) * 9973) & 0x7FFFFFFF
     return mixed if mixed != 0 else 1
 
 

@@ -2,7 +2,7 @@
 target-version = "py310"
 line-length = 100
 src = [".", "server_routes", "tests"]
-extend-exclude = ["*.ipynb", "start.py", "utils.py", "engine.py", "download_model.py"]
+extend-exclude = ["start.py", "utils.py", "engine.py", "download_model.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

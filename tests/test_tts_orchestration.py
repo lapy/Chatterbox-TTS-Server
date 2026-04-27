@@ -255,8 +255,6 @@ def test_synthesize_text_chunks_batch_splits_when_chunk_batch_size_set(monkeypat
     monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
 
     def get_int_batch2(key, default=0):
-        if key == "tts_engine.parallel_chunk_workers":
-            return 1
         if key == "tts_engine.chunk_batch_size":
             return 2
         return default
@@ -296,8 +294,6 @@ def test_chunk_quality_retry_invokes_synthesize(monkeypatch):
     def get_int_q(key, default=0):
         if key == "tts_engine.chunk_quality_max_retries":
             return 2
-        if key == "tts_engine.parallel_chunk_workers":
-            return 1
         if key == "tts_engine.chunk_batch_size":
             return 0
         return default
@@ -360,8 +356,6 @@ def test_chunk_asr_mismatch_triggers_resynthesis(monkeypatch):
     def get_int_patched(key, default=0):
         if key == "tts_engine.chunk_quality_max_retries":
             return 2
-        if key == "tts_engine.parallel_chunk_workers":
-            return 1
         if key == "tts_engine.chunk_batch_size":
             return 0
         return orig_get_int(key, default)
@@ -396,8 +390,6 @@ def test_chunked_reference_path_only_on_first_job(monkeypatch):
     monkeypatch.setattr(engine_module, "synthesize_batch", fake_synthesize_batch)
 
     def get_int_seq(key, default=0):
-        if key == "tts_engine.parallel_chunk_workers":
-            return 1
         if key == "tts_engine.chunk_batch_size":
             return 0
         return default
@@ -416,26 +408,18 @@ def test_chunked_reference_path_only_on_first_job(monkeypatch):
     assert captured == [[("/voices/ref.wav", "chunk a"), (None, "chunk b")]]
 
 
-def test_parallel_workers_pass_reference_per_chunk_and_call_parallel_engine(monkeypatch):
-    """Extended-style overlap: ref path on every chunk, synthesize_batch_parallel, derived seeds."""
+def test_stale_parallel_workers_config_is_ignored(monkeypatch):
+    """Chunk synthesis stays sequential even if an old config still has parallel workers."""
     params = ResolvedSynthesisParams(0.8, 0.5, 0.5, 42, "en", 1.0)
-    parallel_calls = []
     batch_calls = []
 
-    def fake_parallel(jobs, *, max_workers, perf_monitor=None, log_prefix=""):
-        parallel_calls.append(
-            (max_workers, [(j.get("audio_prompt_path"), j["seed"]) for j in jobs])
-        )
+    def fake_batch(jobs, perf_monitor=None, log_prefix=""):
+        batch_calls.append([(j.get("audio_prompt_path"), j["seed"]) for j in jobs])
         return [
             (torch.tensor([float(i + 1)], dtype=torch.float32), 24000)
             for i in range(len(jobs))
         ]
 
-    def fake_batch(jobs, perf_monitor=None, log_prefix=""):
-        batch_calls.append(jobs)
-        raise AssertionError("sequential batch should not be used when parallel > 1")
-
-    monkeypatch.setattr(engine_module, "synthesize_batch_parallel", fake_parallel)
     monkeypatch.setattr(engine_module, "synthesize_batch", fake_batch)
 
     def get_int_par(key, default=0):
@@ -458,14 +442,7 @@ def test_parallel_workers_pass_reference_per_chunk_and_call_parallel_engine(monk
     )
     assert sr == 24000
     assert [float(s.reshape(-1)[0]) for s in segments] == [1.0, 2.0]
-    assert len(parallel_calls) == 1
-    assert parallel_calls[0][0] == 3
-    paths_seeds = parallel_calls[0][1]
-    assert paths_seeds == [
-        ("/voices/ref.wav", 506952163),
-        ("/voices/ref.wav", 1013904284),
-    ]
-    assert batch_calls == []
+    assert batch_calls == [[("/voices/ref.wav", 42), (None, 42)]]
 
 
 def test_synthesize_text_chunks_batch_does_not_apply_speed_factor(monkeypatch):

@@ -186,7 +186,7 @@ The server utilizes the **`chatterbox-tts`** model, developed by Resemble AI. Th
 *   **Flexible API:** Includes a custom `/tts` endpoint for full control and an OpenAI-compatible `/v1/audio/speech` endpoint for broader integration.
 *   **Interactive Web UI:** Provides a comprehensive interface for generation, configuration, and audio management.
 *   **Configuration Management:** Centralized settings via `config.yaml`, editable through the UI or directly.
-*   **GPU Acceleration:** Supports NVIDIA CUDA and Apple MPS for faster inference, with CPU fallback.
+*   **GPU Acceleration:** Supports **NVIDIA CUDA** for faster inference, with **CPU** fallback (Apple MPS and AMD ROCm are not supported in this project).
 *   **Optional Audio Post-Processing:** Features for silence trimming and audio cleanup.
 *   **Docker Support:** Facilitates easy deployment and scaling.
 
@@ -223,7 +223,6 @@ Ensure your system meets the following requirements before proceeding with insta
     *   **Architecture:** Maxwell architecture or newer.
     *   **VRAM:** Specific VRAM requirements depend on the `chatterbox-tts` model variant, but generally, 6GB+ is advisable for smoother operation.
     *   See Section [4.5 GPU Acceleration Setup (NVIDIA)](#45-gpu-acceleration-setup-nvidia) for driver and toolkit details.
-*   **Apple Silicon:** M1, M2, M3, or newer Apple Silicon chips with macOS 12.3+ provide excellent acceleration via Apple Metal Performance Shaders (MPS).
 
 #### 3.3.3 Memory and Storage
 *   **RAM:** Minimum 8 GB, 16 GB or more recommended.
@@ -332,16 +331,14 @@ The `chatterbox-tts` engine and this server rely on PyTorch. To enable CUDA acce
     *   **Your OS:** Select your operating system (Linux or Windows).
     *   **Package:** Pip
     *   **Language:** Python
-    *   **Compute Platform:** Select a CUDA version (e.g., CUDA 11.8, CUDA 12.1). **Crucially, choose a CUDA version that is compatible with (less than or equal to) the CUDA version reported by your `nvidia-smi` command.**
-3.  The website will generate a `pip install` command. Copy this command.
-4.  In your **activated virtual environment**, first uninstall any existing CPU-only PyTorch versions that might have been installed by `requirements.txt`:
+    *   **Compute Platform:** Choose a wheel variant that matches your GPU and driver (this project’s **`requirements-nvidia.txt`** uses **cu124** for torch 2.6; use **`requirements-nvidia-cu128.txt`** for Blackwell). **Pick a platform whose CUDA runtime is ≤ your `nvidia-smi` “CUDA Version”.**
+3.  The website will generate a `pip install` command. For this repo, prefer installing from **`requirements-nvidia.txt`** or **`requirements-nvidia-cu128.txt`** so versions stay aligned with **resemble-ai/chatterbox**.
+4.  In your **activated virtual environment**, you can uninstall conflicting torch builds, then:
     ```bash
     pip uninstall torch torchvision torchaudio -y
+    pip install -r requirements-nvidia.txt
     ```
-5.  Then, paste and run the command obtained from the PyTorch website. Example (for CUDA 12.1, **replace with your specific command**):
-    ```bash
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-    ```
+   (or `requirements-nvidia-cu128.txt` for RTX 50/Blackwell). Then install **chatterbox-tts** with `--no-deps` as documented in the README.
 
 #### 4.5.3 Verification
 To verify that PyTorch can utilize your GPU:
@@ -359,59 +356,7 @@ To verify that PyTorch can utilize your GPU:
     ```
 *   If `CUDA available:` prints `True`, your setup is correct. If `False`, revisit driver and PyTorch installation steps.
 
-### 4.6 GPU Acceleration Setup (MPS)
-
-For Apple Silicon Macs (M1, M2, M3, etc.), follow this specific installation sequence:
-
-#### 4.6.1 Prerequisites
-- macOS 12.3 or later for MPS support
-- An Apple Silicon Mac (M1, M2, M3, or newer)
-
-#### 4.6.2 Installation Steps
-
-1. **Install PyTorch with MPS support first:**
-   ```bash
-   # With virtual environment activated
-   pip install torch torchvision torchaudio
-   ```
-
-2. **Install chatterbox-tts without dependencies:**
-   ```bash
-   pip install --no-deps git+https://github.com/resemble-ai/chatterbox.git
-   ```
-
-3. **Install core server dependencies:**
-   ```bash
-   pip install fastapi 'uvicorn[standard]' librosa safetensors soundfile pydub audiotsm praat-parselmouth python-multipart requests aiofiles PyYAML watchdog unidecode inflect tqdm
-   ```
-
-4. **Install missing chatterbox dependencies:**
-   ```bash
-   pip install conformer==0.3.2 diffusers==0.29.0 resemble-perth==1.0.1 transformers==4.46.3
-   ```
-
-5. **Install remaining dependencies (if not already installed):**
-   ```bash
-   pip install --no-deps s3tokenizer
-   pip install onnx==1.16.0
-   ```
-
-6. **Configure MPS device in config.yaml:**
-   ```yaml
-   tts_engine:
-     device: mps  # Set to 'mps' instead of 'auto' or 'cuda'
-   ```
-
-#### 4.6.3 Verification
-```bash
-python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'MPS available: {torch.backends.mps.is_available()}')"
-```
-
-#### 4.6.4 Why This Process Is Necessary
-
-Apple Silicon requires careful dependency management due to conflicts between the pinned PyTorch versions in chatterbox-tts requirements and the latest PyTorch versions that support MPS acceleration. This step-by-step process avoids version conflicts while ensuring MPS support.
-
-### 4.7 Initial Configuration (`config.yaml`)
+### 4.6 Initial Configuration (`config.yaml`)
 
 The server uses a `config.yaml` file for all its settings.
 *   On the first run, if `config.yaml` is not found in the project root, the server will automatically create it using default values defined internally (see `config.py` [1]).
@@ -442,7 +387,7 @@ The following table describes the main sections and some key parameters you migh
 |                       | `log_file_max_size_mb`        | integer       | Maximum size of a single log file before rotation.                                                            | `10`                     |
 |                       | `log_file_backup_count`       | integer       | Number of backup log files to keep.                                                                           | `5`                      |
 | **`model`**           | `repo_id`                     | string        | Hugging Face repository ID for the `chatterbox-tts` model.                                                    | `ResembleAI/chatterbox`  |
-| **`tts_engine`**      | `device`                      | string        | TTS processing device: `auto`, `cuda`, `mps`, or `cpu`. `auto` attempts CUDA, then MPS, falls back to CPU.     | `auto`                   |
+| **`tts_engine`**      | `device`                      | string        | TTS device: `auto`, `cuda`, or `cpu`. `auto` uses CUDA if it works, else CPU. Legacy `mps` is accepted but not used (CPU instead).     | `auto`                   |
 |                       | `predefined_voices_path`      | string        | Directory for predefined voice audio files.                                                                   | `voices`                 |
 |                       | `reference_audio_path`        | string        | Directory for user-uploaded reference audio files for voice cloning.                                          | `reference_audio`        |
 |                       | `default_voice_id`            | string        | Filename of the default predefined voice to use if none selected (primarily for UI).                            | `default_sample.wav`     |
@@ -752,8 +697,6 @@ This section provides guidance on common issues encountered with the Chatterbox 
 | Issue                                         | Possible Cause(s)                                                                                                | Suggested Solution(s)                                                                                                                                                                                             |
 | :-------------------------------------------- | :--------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Server Fails to Start**                     | Port conflict; Python environment issues; missing critical dependencies; `config.yaml` corruption.                 | Check terminal logs for specific error messages. Ensure selected port is free. Verify virtual environment activation and `pip install -r requirements.txt`. Delete `config.yaml` to regenerate on next start.       |
-| **Apple Silicon (MPS) Not Available**          | macOS version too old; non-Apple Silicon Mac; incorrect PyTorch version; device not configured properly.           | Ensure macOS 12.3+, Apple Silicon Mac (M1/M2/M3+). Install PyTorch first: `pip install torch torchvision torchaudio`. Set `device: mps` in `config.yaml`. Verify: `python -c "import torch; print(torch.backends.mps.is_available())"`|
-| **Apple Silicon Installation Conflicts**       | Version conflicts between PyTorch and chatterbox-tts dependencies; ONNX build failures.                           | Follow exact Apple Silicon installation sequence in Section 4.5.1. Install PyTorch first, then use `--no-deps` for chatterbox-tts. Use `pip install onnx==1.16.0` for compatible ONNX version.                    |
 | **"CUDA not available" or Slow Performance**  | NVIDIA drivers not installed/updated; incorrect PyTorch (CUDA) version; GPU not selected/available.                | Follow Section [4.5 GPU Acceleration Setup (NVIDIA)](#45-gpu-acceleration-setup-nvidia). Set `tts_engine.device` to `cuda` in `config.yaml`. Check `nvidia-smi`.                                                    |
 | **VRAM Out of Memory (OOM) Errors**           | GPU has insufficient VRAM for the model; other applications consuming GPU memory.                                  | Ensure GPU meets minimum requirements. Close other GPU-heavy applications. If problem persists, consider a GPU with more VRAM. For very long texts, ensure chunking is active and `chunk_size` is reasonable.    |
 | **Model Download Fails**                      | Internet connectivity issues; Hugging Face Hub issues; incorrect `model.repo_id` in `config.yaml`; cache problems. | Check internet connection. Verify `model.repo_id`. Try clearing Hugging Face cache (`HF_HOME` or default location).                                                                                                   |

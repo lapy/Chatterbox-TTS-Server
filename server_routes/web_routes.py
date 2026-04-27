@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 import engine
 import utils
-from config import get_full_config_for_template
+from config import get_redacted_config_for_template
 
 logger = logging.getLogger(__name__)
 UI_STATIC_PATH = Path(__file__).resolve().parent.parent / "ui"
@@ -78,7 +78,7 @@ async def get_ui_initial_data():
     """
     logger.info("Request received for /api/ui/initial-data.")
     try:
-        full_config = get_full_config_for_template()
+        full_config = get_redacted_config_for_template()
         reference_files = utils.get_valid_reference_files()
         predefined_voices = utils.get_predefined_voices()
 

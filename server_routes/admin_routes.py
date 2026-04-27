@@ -5,6 +5,7 @@ from typing import Dict, List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 import engine
 import utils
@@ -106,7 +107,7 @@ async def restart_server_endpoint():
 
     try:
         # Attempt to reload the engine with the new configuration
-        success = engine.reload_model()
+        success = await run_in_threadpool(engine.reload_model)
 
         if success:
             model_info = engine.get_model_info()
@@ -145,7 +146,7 @@ async def unload_model_endpoint():
     logger.info("Request received for /api/unload (Model Unload).")
 
     try:
-        success = engine.unload_model()
+        success = await run_in_threadpool(engine.unload_model)
 
         if success:
             logger.info("Model successfully unloaded and GPU memory released.")

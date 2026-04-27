@@ -6,11 +6,31 @@ import logging
 import random
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 from pathlib import Path
+
+# Must run before importing chatterbox: model __init__ uses perth.PerthImplicitWatermarker().
+# We always use a no-op so output is never implicitly watermarked.
+logger = logging.getLogger(__name__)
+
+
+def _force_noop_perth_watermarker() -> None:
+    try:
+        import perth
+    except ImportError:
+        return
+
+    class _NoOpPerthWatermarker:
+        def apply_watermark(self, wav, *args, **kwargs):
+            return wav
+
+    perth.PerthImplicitWatermarker = _NoOpPerthWatermarker  # type: ignore[assignment, misc]
+    logger.info("Perth implicit watermarking disabled (no-op watermarker).")
+
+
+_force_noop_perth_watermarker()
 
 from chatterbox.tts import ChatterboxTTS  # Main TTS engine class
 from chatterbox.models.s3gen.const import (
@@ -37,9 +57,8 @@ except ImportError:
     MULTILINGUAL_AVAILABLE = False
 
 # Import the singleton config_manager
-from config import config_manager
-
-logger = logging.getLogger(__name__)
+from config import config_manager, get_gen_default_turbo_repetition_penalty
+from utils import derive_chunk_synthesis_seed
 
 # Log Turbo availability status at module load time
 if TURBO_AVAILABLE:
@@ -109,8 +128,6 @@ def set_seed(seed_value: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed_value)
         torch.cuda.manual_seed_all(seed_value)  # if using multi-GPU
-    if torch.backends.mps.is_available():
-        torch.mps.manual_seed(seed_value)
     random.seed(seed_value)
     np.random.seed(seed_value)
     logger.info(f"Global seed set to: {seed_value}")
@@ -133,26 +150,6 @@ def _test_cuda_functionality() -> bool:
         return True
     except Exception as e:
         logger.warning(f"CUDA functionality test failed: {e}")
-        return False
-
-
-def _test_mps_functionality() -> bool:
-    """
-    Tests if MPS is actually functional, not just available.
-
-    Returns:
-        bool: True if MPS works, False otherwise.
-    """
-    if not torch.backends.mps.is_available():
-        return False
-
-    try:
-        test_tensor = torch.tensor([1.0])
-        test_tensor = test_tensor.to("mps")
-        test_tensor = test_tensor.cpu()
-        return True
-    except Exception as e:
-        logger.warning(f"MPS functionality test failed: {e}")
         return False
 
 
@@ -266,12 +263,15 @@ def load_model() -> bool:
             if _test_cuda_functionality():
                 resolved_device_str = "cuda"
                 logger.info("CUDA functionality test passed. Using CUDA.")
-            elif _test_mps_functionality():
-                resolved_device_str = "mps"
-                logger.info("MPS functionality test passed. Using MPS.")
             else:
                 resolved_device_str = "cpu"
-                logger.info("CUDA and MPS not functional or not available. Using CPU.")
+                logger.info("CUDA not available or not functional. Using CPU.")
+
+        elif device_setting == "mps":
+            logger.warning(
+                "tts_engine.device 'mps' is not supported; use 'cuda' or 'cpu'. Using CPU."
+            )
+            resolved_device_str = "cpu"
 
         elif device_setting == "cuda":
             if _test_cuda_functionality():
@@ -282,18 +282,6 @@ def load_model() -> bool:
                 logger.warning(
                     "CUDA was requested in config but functionality test failed. "
                     "PyTorch may not be compiled with CUDA support. "
-                    "Automatically falling back to CPU."
-                )
-
-        elif device_setting == "mps":
-            if _test_mps_functionality():
-                resolved_device_str = "mps"
-                logger.info("MPS requested and functional. Using MPS.")
-            else:
-                resolved_device_str = "cpu"
-                logger.warning(
-                    "MPS was requested in config but functionality test failed. "
-                    "PyTorch may not be compiled with MPS support. "
                     "Automatically falling back to CPU."
                 )
 
@@ -308,8 +296,6 @@ def load_model() -> bool:
             )
             if _test_cuda_functionality():
                 resolved_device_str = "cuda"
-            elif _test_mps_functionality():
-                resolved_device_str = "mps"
             else:
                 resolved_device_str = "cpu"
             logger.info(f"Auto-detection resolved to: {resolved_device_str}")
@@ -425,12 +411,18 @@ def _generate_waveform_unlocked(
             cfg_weight=cfg_weight,
         )
     if loaded_model_type == "turbo":
+        rep = float(get_gen_default_turbo_repetition_penalty())
+        if rep < 1.0:
+            rep = 1.0
+        if rep > 2.0:
+            rep = 2.0
         return chatterbox_model.generate(
             text=text,
             audio_prompt_path=None,
             exaggeration=exaggeration,
             cfg_weight=cfg_weight,
             temperature=temperature,
+            repetition_penalty=rep,
         )
     return chatterbox_model.generate(
         text=text,
@@ -482,10 +474,26 @@ def _synthesize_unlocked(
         return None, None
 
     try:
-        # Set seed globally if a specific seed value is provided and is non-zero.
-        if seed != 0:
-            logger.info(f"Applying user-provided seed for generation: {seed}")
-            set_seed(seed)
+        # Non-zero global seed: chunk 1 uses it; chunk 2+ use a deterministic offset
+        # so we do not reset the RNG to identical state before every chunk (which
+        # can correlate output and make phrases *sound* repeated in longer jobs).
+        eff_seed = seed
+        if (
+            seed != 0
+            and chunk_index is not None
+            and chunk_total is not None
+            and int(chunk_total) > 1
+        ):
+            eff_seed = derive_chunk_synthesis_seed(seed, int(chunk_index))
+        if eff_seed != 0:
+            logger.info(
+                "Applying seed for generation: %s (base=%s chunk %s/%s)",
+                eff_seed,
+                seed,
+                chunk_index,
+                chunk_total,
+            )
+            set_seed(eff_seed)
         else:
             logger.debug(
                 "Using default (potentially random) generation behavior as seed is 0."
@@ -624,67 +632,6 @@ def synthesize_batch(
     return results
 
 
-def synthesize_batch_parallel(
-    jobs: List[Dict[str, Any]],
-    *,
-    max_workers: int,
-    perf_monitor: Any = None,
-    log_prefix: str = "TTS",
-) -> List[Tuple[Optional[torch.Tensor], Optional[int]]]:
-    """
-    Run multiple chunk jobs concurrently using a thread pool while holding
-    ``MODEL_INFERENCE_LOCK`` for the entire batch so other requests cannot
-    interleave with this one.
-
-    Workers call ``_synthesize_unlocked`` directly (they must not acquire the
-    lock). Callers should pass ``audio_prompt_path`` on every chunk that needs
-    reference cloning so jobs do not rely on ``self.conds`` left by another
-    worker.
-
-    .. note::
-        Chatterbox / PyTorch are not fully thread-safe. This mirrors the overlap
-        strategy used by Chatterbox-TTS-Extended; use ``parallel_chunk_workers: 1``
-        if you hit instability or odd audio.
-    """
-    if not isinstance(jobs, list) or not jobs:
-        return []
-
-    n_jobs = len(jobs)
-    workers = max(1, min(int(max_workers), n_jobs))
-
-    def _run_index(i: int) -> Tuple[Optional[torch.Tensor], Optional[int]]:
-        job = jobs[i]
-        chunk_idx = job.get("chunk_index")
-        chunk_tot = job.get("chunk_total")
-        if chunk_idx is None:
-            chunk_idx = i + 1
-        if chunk_tot is None:
-            chunk_tot = n_jobs
-        return _synthesize_unlocked(
-            text=str(job.get("text", "")),
-            audio_prompt_path=job.get("audio_prompt_path"),
-            temperature=float(job.get("temperature", 0.8)),
-            exaggeration=float(job.get("exaggeration", 0.5)),
-            cfg_weight=float(job.get("cfg_weight", 0.5)),
-            seed=int(job.get("seed", 0)),
-            language=str(job.get("language", "en")),
-            perf_monitor=None,
-            chunk_index=int(chunk_idx),
-            chunk_total=int(chunk_tot),
-            log_prefix=log_prefix,
-        )
-
-    with MODEL_INFERENCE_LOCK:
-        if perf_monitor is not None and getattr(perf_monitor, "enabled", False):
-            perf_monitor.record(
-                f"{log_prefix} parallel chunk pool workers={workers} jobs={n_jobs}"
-            )
-        if workers <= 1 or n_jobs <= 1:
-            return [_run_index(i) for i in range(n_jobs)]
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            return list(pool.map(_run_index, range(n_jobs)))
-
-
 def iter_synthesize_under_lock(
     text_chunks: List[str],
     audio_prompt_path_str: Optional[str],
@@ -734,7 +681,7 @@ def iter_synthesize_under_lock(
             yield audio_tensor, sr
 
 
-def unload_model() -> bool:
+def _unload_model_unlocked() -> bool:
     """
     Unloads the current model and releases all GPU memory.
     Does NOT reload the model - use reload_model() for that.
@@ -767,21 +714,17 @@ def unload_model() -> bool:
         logger.info("Clearing CUDA cache...")
         torch.cuda.empty_cache()
 
-    # 5. Clear GPU Cache (MPS - Apple Silicon)
-    if torch.backends.mps.is_available():
-        try:
-            torch.mps.empty_cache()
-            logger.info("Cleared MPS cache.")
-        except AttributeError:
-            logger.debug(
-                "torch.mps.empty_cache() not available in this PyTorch version."
-            )
-
     logger.info("Model unloaded and GPU memory released.")
     return True
 
 
-def reload_model() -> bool:
+def unload_model() -> bool:
+    """Thread-safe public wrapper for unloading the shared model."""
+    with MODEL_INFERENCE_LOCK:
+        return _unload_model_unlocked()
+
+
+def _reload_model_unlocked() -> bool:
     """
     Unloads the current model, clears GPU memory, and reloads the model
     based on the current configuration. Used for hot-swapping models
@@ -814,20 +757,15 @@ def reload_model() -> bool:
         logger.info("Clearing CUDA cache...")
         torch.cuda.empty_cache()
 
-    # 5. Clear GPU Cache (MPS - Apple Silicon)
-    if torch.backends.mps.is_available():
-        try:
-            torch.mps.empty_cache()
-            logger.info("Cleared MPS cache.")
-        except AttributeError:
-            # Older PyTorch versions may not have mps.empty_cache()
-            logger.debug(
-                "torch.mps.empty_cache() not available in this PyTorch version."
-            )
-
-    # 6. Reload model from the (now updated) configuration
+    # 5. Reload model from the (now updated) configuration
     logger.info("Memory cleared. Reloading model from updated config...")
     return load_model()
+
+
+def reload_model() -> bool:
+    """Thread-safe public wrapper for hot-swapping the shared model."""
+    with MODEL_INFERENCE_LOCK:
+        return _reload_model_unlocked()
 
 
 # --- End File: engine.py ---

@@ -8,7 +8,7 @@ management, hardware detection, dependency installation, and server startup.
 
 Features:
 - Cross-platform support (Windows, Linux, macOS)
-- Automatic GPU detection (NVIDIA, AMD)
+- Automatic GPU detection (NVIDIA; CPU-only otherwise)
 - Interactive hardware selection menu
 - Virtual environment management
 - Dependency installation with progress indication
@@ -23,9 +23,8 @@ Options:
     --reinstall, -r     Remove existing installation and reinstall fresh
     --upgrade, -u       Upgrade to latest version (keeps hardware selection)
     --cpu               Install CPU version (skip menu)
-    --nvidia            Install NVIDIA CUDA 12.1 version (skip menu)
+    --nvidia            Install NVIDIA PyTorch cu124 (torch 2.6) (skip menu)
     --nvidia-cu128      Install NVIDIA CUDA 12.8 version (skip menu)
-    --rocm              Install AMD ROCm version (skip menu)
     --portable          Use portable Python environment (Windows, skip prompt)
     --no-portable       Use standard virtual environment (Windows, skip prompt)
     --verbose, -v       Show detailed installation output
@@ -87,28 +86,23 @@ EMBEDDED_PYTHON_SHA256 = ""
 INSTALL_CPU = "cpu"
 INSTALL_NVIDIA = "nvidia"
 INSTALL_NVIDIA_CU128 = "nvidia-cu128"
-INSTALL_ROCM = "rocm"
 
 # Requirements file mapping
 REQUIREMENTS_MAP = {
     INSTALL_CPU: "requirements.txt",
     INSTALL_NVIDIA: "requirements-nvidia.txt",
     INSTALL_NVIDIA_CU128: "requirements-nvidia-cu128.txt",
-    INSTALL_ROCM: "requirements-rocm.txt",
 }
-
-# ROCm init requirements file (installed before main requirements)
-REQUIREMENTS_ROCM_INIT = "requirements-rocm-init.txt"
 
 # Human-readable names for installation types
 INSTALL_NAMES = {
     INSTALL_CPU: "CPU Only",
-    INSTALL_NVIDIA: "NVIDIA GPU (CUDA 12.1)",
+    INSTALL_NVIDIA: "NVIDIA GPU (PyTorch 2.6, cu124)",
     INSTALL_NVIDIA_CU128: "NVIDIA GPU (CUDA 12.8 / Blackwell)",
-    INSTALL_ROCM: "AMD GPU (ROCm 6.1)",
 }
 
-# Pinned chatterbox-v2 revision (see chatterbox_v2.ref; override only if you know the risk)
+# Pinned Chatterbox source: see chatterbox_pip.txt (official by default) or set CHATTERBOX_PIP_URL.
+# If chatterbox_pip.txt is missing, falls back to devnen/chatterbox-v2 + chatterbox_v2.ref.
 def _chatterbox_git_ref() -> str:
     ref_file = Path(__file__).resolve().parent / "chatterbox_v2.ref"
     try:
@@ -121,10 +115,24 @@ def _chatterbox_git_ref() -> str:
     return "cc0357396d9c73fc1e6c544ee40bb596020edd09"
 
 
-CHATTERBOX_GIT_REF = _chatterbox_git_ref()
-CHATTERBOX_REPO = (
-    f"git+https://github.com/devnen/chatterbox-v2.git@{CHATTERBOX_GIT_REF}"
-)
+def _chatterbox_pip_spec() -> str:
+    url = os.environ.get("CHATTERBOX_PIP_URL", "").strip()
+    if url.startswith("git+"):
+        return url
+    pip_file = Path(__file__).resolve().parent / "chatterbox_pip.txt"
+    try:
+        if pip_file.is_file():
+            for line in pip_file.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if s and not s.startswith("#") and s.startswith("git+"):
+                    return s
+    except OSError:
+        pass
+    ref = _chatterbox_git_ref()
+    return f"git+https://github.com/devnen/chatterbox-v2.git@{ref}"
+
+
+CHATTERBOX_PIP_SPEC = _chatterbox_pip_spec()
 
 # Timeout settings (seconds)
 # First run downloads large model files (~2GB). Subsequent starts are much faster.
@@ -523,6 +531,16 @@ def get_install_state(venv_dir):
             install_type = install_type_file.read_text(encoding="utf-8").strip()
         except Exception:
             pass
+        if install_type == "rocm":
+            print_warning(
+                "Previous AMD/ROCm install type is no longer supported. "
+                "Treating as CPU. Re-run: python start.py --reinstall --nvidia (or --nvidia-cu128) if you use NVIDIA."
+            )
+            install_type = INSTALL_CPU
+            try:
+                install_type_file.write_text(INSTALL_CPU, encoding="utf-8")
+            except OSError:
+                pass
 
     return True, install_type
 
@@ -533,7 +551,7 @@ def save_install_state(venv_dir, install_type):
 
     Args:
         venv_dir: Path to virtual environment directory
-        install_type: Type of installation (cpu, nvidia, nvidia-cu128, rocm)
+        install_type: Type of installation (cpu, nvidia, nvidia-cu128)
     """
     try:
         # Save install type
@@ -1248,66 +1266,17 @@ def detect_nvidia_gpu():
         return False, None
 
 
-def detect_amd_gpu():
-    """
-    Detect AMD GPU using rocm-smi.
-
-    Returns:
-        Tuple of (found: bool, gpu_name: str or None)
-    """
-    try:
-        result = subprocess.run(
-            ["rocm-smi", "--showproductname"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-        if result.returncode == 0 and result.stdout.strip():
-            # Parse output to find GPU name
-            lines = result.stdout.strip().split("\n")
-            for line in lines:
-                if "Card series" in line or "GPU" in line:
-                    # Extract the name part
-                    parts = line.split(":")
-                    if len(parts) > 1:
-                        return True, parts[1].strip()
-
-            # If we got output but couldn't parse name, still report found
-            return True, "AMD GPU (unknown model)"
-
-        return False, None
-
-    except FileNotFoundError:
-        # rocm-smi not found
-        return False, None
-    except subprocess.TimeoutExpired:
-        return False, None
-    except Exception:
-        return False, None
-
-
 def detect_gpu():
     """
-    Detect available GPUs.
+    Detect available NVIDIA GPU (this project supports CUDA and CPU only).
 
     Returns:
-        Dictionary with detection results:
-        {
-            "nvidia": bool,
-            "nvidia_name": str or None,
-            "amd": bool,
-            "amd_name": str or None,
-        }
+        Dictionary with keys: nvidia, nvidia_name
     """
     nvidia_found, nvidia_name = detect_nvidia_gpu()
-    amd_found, amd_name = detect_amd_gpu()
-
     return {
         "nvidia": nvidia_found,
         "nvidia_name": nvidia_name,
-        "amd": amd_found,
-        "amd_name": amd_name,
     }
 
 
@@ -1328,10 +1297,7 @@ def get_default_choice(gpu_info):
     """
     if gpu_info["nvidia"]:
         return INSTALL_NVIDIA
-    elif gpu_info["amd"] and is_linux():
-        return INSTALL_ROCM
-    else:
-        return INSTALL_CPU
+    return INSTALL_CPU
 
 
 def show_installation_menu(gpu_info, default_choice):
@@ -1350,7 +1316,6 @@ def show_installation_menu(gpu_info, default_choice):
         "1": INSTALL_CPU,
         "2": INSTALL_NVIDIA,
         "3": INSTALL_NVIDIA_CU128,
-        "4": INSTALL_ROCM,
     }
 
     # Reverse map for showing default
@@ -1369,11 +1334,6 @@ def show_installation_menu(gpu_info, default_choice):
     else:
         print(f"   NVIDIA GPU: {Colors.DIM}Not detected{Colors.RESET}")
 
-    if gpu_info["amd"]:
-        print_success(f"   AMD GPU:    Detected ({gpu_info['amd_name']})")
-    else:
-        print(f"   AMD GPU:    {Colors.DIM}Not detected{Colors.RESET}")
-
     # Print menu
     print()
     print("=" * 60)
@@ -1384,25 +1344,15 @@ def show_installation_menu(gpu_info, default_choice):
     # Menu options with descriptions
     options = [
         ("1", "CPU Only", "No GPU acceleration - works on any system"),
-        ("2", "NVIDIA GPU (CUDA 12.1)", "Standard for RTX 20/30/40 series"),
+        ("2", "NVIDIA GPU (PyTorch cu124)", "Standard for RTX 20/30/40; driver with CUDA 12.4+ runtime"),
         ("3", "NVIDIA GPU (CUDA 12.8)", "For RTX 5090 / Blackwell GPUs only"),
-        ("4", "AMD GPU (ROCm 6.1)", "For AMD GPUs on Linux"),
     ]
 
     for num, name, desc in options:
-        # Determine if this is the default
         is_default = num == default_num
-
-        # Check for special warnings
-        warning = ""
-        if num == "4" and is_windows():
-            warning = f" {Colors.YELLOW}⚠️ Not supported on Windows{Colors.RESET}"
-
-        # Build the option line
         default_marker = f" {Colors.GREEN}[DEFAULT]{Colors.RESET}" if is_default else ""
-
         print(f"   [{num}] {name}{default_marker}")
-        print(f"       {Colors.DIM}{desc}{warning}{Colors.RESET}")
+        print(f"       {Colors.DIM}{desc}{Colors.RESET}")
         print()
 
     # Get user input
@@ -1419,7 +1369,7 @@ def show_installation_menu(gpu_info, default_choice):
             if choice in MENU_MAP:
                 return MENU_MAP[choice]
 
-            print_warning(f"   Invalid choice '{choice}'. Please enter 1, 2, 3, or 4.")
+            print_warning(f"   Invalid choice '{choice}'. Please enter 1, 2, or 3.")
             print()
 
         except (EOFError, KeyboardInterrupt):
@@ -1502,8 +1452,8 @@ def install_chatterbox_no_deps(venv_pip):
     """
     Install Chatterbox TTS without dependencies.
 
-    Required for CUDA 12.8 (Blackwell) and ROCm installations to prevent pip
-    from replacing the platform-specific PyTorch wheels (cu128 or ROCm) with
+    Required for CUDA 12.8 (Blackwell) installations to prevent pip
+    from replacing the platform-specific PyTorch cu128 wheels with
     generic CPU-only versions from PyPI.
 
     Args:
@@ -1516,7 +1466,7 @@ def install_chatterbox_no_deps(venv_pip):
         "Installing Chatterbox TTS, s3tokenizer, onnx (--no-deps to preserve PyTorch build)..."
     )
 
-    cmd = f'"{venv_pip}" install --no-deps {CHATTERBOX_REPO} s3tokenizer==0.3.0 onnx==1.16.0'
+    cmd = f'"{venv_pip}" install --no-deps {CHATTERBOX_PIP_SPEC} s3tokenizer==0.3.0 onnx==1.16.0'
 
     success = run_command_with_progress(cmd, description="Installing Chatterbox TTS + s3tokenizer + onnx")
 
@@ -1544,7 +1494,7 @@ def perform_installation(venv_pip, install_type, root_dir):
 
     Args:
         venv_pip: Path to pip executable in venv
-        install_type: One of INSTALL_CPU, INSTALL_NVIDIA, INSTALL_NVIDIA_CU128, INSTALL_ROCM
+        install_type: One of INSTALL_CPU, INSTALL_NVIDIA, INSTALL_NVIDIA_CU128
         root_dir: Root directory of the project
 
     Returns:
@@ -1555,16 +1505,6 @@ def perform_installation(venv_pip, install_type, root_dir):
     if not requirements_file:
         print_error(f"Unknown installation type: {install_type}")
         return False
-
-    # ROCm requires a two-step install: ROCm PyTorch wheels first, then deps
-    if install_type == INSTALL_ROCM:
-        rocm_init_path = root_dir / REQUIREMENTS_ROCM_INIT
-        if not rocm_init_path.exists():
-            print_error(f"ROCm init file not found: {REQUIREMENTS_ROCM_INIT}")
-            return False
-        print_substep(f"Installing ROCm PyTorch from {REQUIREMENTS_ROCM_INIT}...")
-        if not install_requirements(venv_pip, REQUIREMENTS_ROCM_INIT, root_dir):
-            return False
 
     # Step 1: Install main requirements
     if not install_requirements(venv_pip, requirements_file, root_dir):
@@ -1577,230 +1517,6 @@ def perform_installation(venv_pip, install_type, root_dir):
         return False
 
     return True
-
-
-def _patch_chatterbox_watermarker(env_dir, use_embedded):
-    """
-    Patch installed chatterbox source files to make the Perth watermarker
-    gracefully optional. If perth fails to load or PerthImplicitWatermarker
-    is None, the server will skip watermarking instead of crashing.
-
-    Uses a no-op watermarker class so that all call sites (apply_watermark)
-    continue to work without modification — they just pass audio through
-    unchanged.
-
-    This patch is idempotent: re-running it on already-patched files is safe.
-
-    Args:
-        env_dir: Path to environment directory (venv or python_embedded)
-        use_embedded: True if using embedded Python environment
-    """
-    # Locate site-packages (differs between embedded, Windows venv, Linux/macOS venv)
-    if use_embedded or is_windows():
-        site_packages = env_dir / "Lib" / "site-packages"
-    else:
-        # Linux/macOS venv: lib/python3.X/site-packages
-        lib_dir = env_dir / "lib"
-        site_packages = None
-        if lib_dir.exists():
-            for child in sorted(lib_dir.iterdir()):
-                if child.name.startswith("python3") and child.is_dir():
-                    candidate = child / "site-packages"
-                    if candidate.is_dir():
-                        site_packages = candidate
-                        break
-        if site_packages is None:
-            print_substep(
-                "Could not locate site-packages, skipping watermarker patch",
-                "warning",
-            )
-            return
-
-    # Find chatterbox package directory (name varies by package version)
-    chatterbox_dir = None
-    for name in ["chatterbox", "chatterbox_tts"]:
-        candidate = site_packages / name
-        if candidate.is_dir():
-            chatterbox_dir = candidate
-            break
-
-    if chatterbox_dir is None:
-        if VERBOSE_MODE:
-            print_substep(
-                "Chatterbox package not found, skipping watermarker patch", "info"
-            )
-        return
-
-    SENTINEL = "# [patched by start.py: watermarker made optional]"
-    INIT_TARGET = "self.watermarker = perth.PerthImplicitWatermarker()"
-    target_files = ["tts.py", "tts_turbo.py", "mtl_tts.py", "vc.py"]
-    patched_count = 0
-
-    for filename in target_files:
-        filepath = chatterbox_dir / filename
-        if not filepath.exists():
-            continue
-
-        try:
-            content = filepath.read_text(encoding="utf-8")
-        except Exception as e:
-            print_substep(f"{filename}: could not read ({e}), skipping", "warning")
-            continue
-
-        # Idempotency: skip if already patched
-        if SENTINEL in content:
-            if VERBOSE_MODE:
-                print_substep(f"{filename}: already patched", "info")
-            continue
-
-        if INIT_TARGET not in content:
-            if VERBOSE_MODE:
-                print_substep(f"{filename}: target pattern not found, skipping", "info")
-            continue
-
-        # Determine whether this file uses the logging module
-        has_logger = "import logging" in content or "getLogger" in content
-        if has_logger:
-            log_line = (
-                "logger.warning("
-                '"Perth watermarker unavailable '
-                '\\u2014 audio will not be watermarked")'
-            )
-        else:
-            log_line = (
-                "print("
-                '"Warning: Perth watermarker unavailable '
-                '\\u2014 audio will not be watermarked")'
-            )
-
-        # Build the replacement block
-        lines = content.split("\n")
-        new_lines = []
-
-        for line in lines:
-            if INIT_TARGET in line and line.lstrip().startswith("self."):
-                indent = line[: len(line) - len(line.lstrip())]
-                new_lines.append(f"{indent}{SENTINEL}")
-                new_lines.append(f"{indent}try:")
-                new_lines.append(
-                    f"{indent}    self.watermarker = perth.PerthImplicitWatermarker()"
-                )
-                new_lines.append(f"{indent}except Exception:")
-                new_lines.append(f"{indent}    class _NoOpWatermarker:")
-                new_lines.append(
-                    f"{indent}        def apply_watermark(self, wav, *args, **kwargs):"
-                )
-                new_lines.append(f"{indent}            return wav")
-                new_lines.append(f"{indent}    self.watermarker = _NoOpWatermarker()")
-                new_lines.append(f"{indent}    {log_line}")
-            else:
-                new_lines.append(line)
-
-        try:
-            filepath.write_text("\n".join(new_lines), encoding="utf-8")
-            print_substep(f"{filename}: watermarker made optional", "done")
-            patched_count += 1
-        except Exception as e:
-            print_substep(f"{filename}: could not write ({e})", "warning")
-
-    if patched_count > 0:
-        print_substep(
-            f"Patched {patched_count} file(s) for optional watermarking", "done"
-        )
-    elif VERBOSE_MODE:
-        print_substep("No files needed watermarker patching", "info")
-
-
-def _patch_chatterbox_mps_float32(env_dir, use_embedded):
-    """
-    Patch installed chatterbox source files to force float32 dtype when moving
-    tensors to device. MPS (Apple Silicon) does not support float64, causing
-    'Cannot convert a MPS Tensor to float64 dtype' errors with the Turbo model.
-
-    This patch is only applied if the installed chatterbox code does NOT already
-    include the fix (i.e., if the upstream repo is used instead of the
-    chatterbox-v2 fork which has this fix built in).
-
-    This patch is idempotent: re-running it on already-patched files is safe.
-
-    Args:
-        env_dir: Path to environment directory (venv or python_embedded)
-        use_embedded: True if using embedded Python environment
-    """
-    # Locate site-packages
-    if use_embedded or is_windows():
-        site_packages = env_dir / "Lib" / "site-packages"
-    else:
-        lib_dir = env_dir / "lib"
-        site_packages = None
-        if lib_dir.exists():
-            for child in sorted(lib_dir.iterdir()):
-                if child.name.startswith("python3") and child.is_dir():
-                    candidate = child / "site-packages"
-                    if candidate.is_dir():
-                        site_packages = candidate
-                        break
-        if site_packages is None:
-            return
-
-    # Find chatterbox package directory
-    chatterbox_dir = None
-    for name in ["chatterbox", "chatterbox_tts"]:
-        candidate = site_packages / name
-        if candidate.is_dir():
-            chatterbox_dir = candidate
-            break
-
-    if chatterbox_dir is None:
-        return
-
-    SENTINEL = "# [patched by start.py: MPS float32 compatibility]"
-
-    # Patch 1: s3tokenizer.py — force float32 on .to(self.device) calls
-    s3tok_path = chatterbox_dir / "models" / "s3tokenizer" / "s3tokenizer.py"
-    if s3tok_path.exists():
-        try:
-            content = s3tok_path.read_text(encoding="utf-8")
-            if SENTINEL not in content:
-                patched = False
-                # Replace wav.to(self.device) with wav.to(self.device, dtype=torch.float32)
-                # but only the bare form (not already patched with dtype=)
-                old1 = "wav = wav.to(self.device)"
-                new1 = "wav = wav.to(self.device, dtype=torch.float32)"
-                if old1 in content and "wav = wav.to(self.device, dtype=" not in content:
-                    content = content.replace(old1, new1)
-                    patched = True
-
-                old2 = "audio = audio.to(self.device)"
-                new2 = "audio = audio.to(self.device, dtype=torch.float32)"
-                if old2 in content and "audio = audio.to(self.device, dtype=" not in content:
-                    content = content.replace(old2, new2)
-                    patched = True
-
-                if patched:
-                    content = SENTINEL + "\n" + content
-                    s3tok_path.write_text(content, encoding="utf-8")
-                    print_substep("s3tokenizer.py: MPS float32 fix applied", "done")
-        except Exception as e:
-            if VERBOSE_MODE:
-                print_substep(f"s3tokenizer.py: could not patch ({e})", "warning")
-
-    # Patch 2: voice_encoder.py — force float32 on mels.to(self.device)
-    ve_path = chatterbox_dir / "models" / "voice_encoder" / "voice_encoder.py"
-    if ve_path.exists():
-        try:
-            content = ve_path.read_text(encoding="utf-8")
-            if SENTINEL not in content:
-                old = "mels.to(self.device)"
-                new = "mels.to(self.device, dtype=torch.float32)"
-                if old in content and "mels.to(self.device, dtype=" not in content:
-                    content = content.replace(old, new)
-                    content = SENTINEL + "\n" + content
-                    ve_path.write_text(content, encoding="utf-8")
-                    print_substep("voice_encoder.py: MPS float32 fix applied", "done")
-        except Exception as e:
-            if VERBOSE_MODE:
-                print_substep(f"voice_encoder.py: could not patch ({e})", "warning")
 
 
 def verify_installation(venv_python):
@@ -2208,10 +1924,9 @@ Examples:
   python start.py                    # Normal start (shows menu if first run)
   python start.py --reinstall        # Remove and reinstall (shows menu)
   python start.py --upgrade          # Upgrade keeping current hardware choice
-  python start.py --nvidia           # Install/start with NVIDIA CUDA 12.1
+  python start.py --nvidia           # Install/start with NVIDIA (PyTorch cu124)
   python start.py --nvidia-cu128     # Install/start with NVIDIA CUDA 12.8
   python start.py --cpu              # Install/start with CPU only
-  python start.py --rocm             # Install/start with AMD ROCm
   python start.py --portable         # Use portable mode (Windows)
   python start.py --no-portable      # Use standard venv (Windows)
   python start.py -v                 # Verbose mode (show all output)
@@ -2239,17 +1954,13 @@ Examples:
         "--cpu", action="store_true", help="Install CPU-only version"
     )
     install_group.add_argument(
-        "--nvidia", action="store_true", help="Install NVIDIA CUDA 12.1 version"
+        "--nvidia", action="store_true", help="Install NVIDIA (PyTorch 2.6 + cu124 wheels)"
     )
     install_group.add_argument(
         "--nvidia-cu128",
         action="store_true",
         help="Install NVIDIA CUDA 12.8 version (for RTX 5090/Blackwell)",
     )
-    install_group.add_argument(
-        "--rocm", action="store_true", help="Install AMD ROCm version (Linux only)"
-    )
-
     # Environment mode (Windows)
     env_group = parser.add_argument_group("Environment Mode (Windows)")
     env_group.add_argument(
@@ -2288,8 +1999,6 @@ def get_install_type_from_args(args):
         return INSTALL_NVIDIA
     elif args.nvidia_cu128:
         return INSTALL_NVIDIA_CU128
-    elif args.rocm:
-        return INSTALL_ROCM
 
     return None
 
@@ -2560,32 +2269,6 @@ def main():
         print()
         print_substep(f"Selected: {type_name}", "done")
 
-        # ROCm warning on Windows
-        if install_type == INSTALL_ROCM and is_windows():
-            print()
-            print_warning("=" * 60)
-            print_warning("   ⚠️  WARNING: ROCm is not supported on Windows!")
-            print_warning("=" * 60)
-            print()
-            print_warning("   ROCm (AMD GPU acceleration) only works on Linux.")
-            print_warning("   Installation will proceed, but GPU acceleration")
-            print_warning("   will NOT work. The server will run on CPU only.")
-            print()
-
-            try:
-                response = input("   Continue anyway? (y/n) [n]: ").strip().lower()
-                if response != "y":
-                    print()
-                    print("   Installation cancelled.")
-                    print("   Tip: Use --nvidia for NVIDIA GPUs or --cpu for CPU-only.")
-                    sys.exit(2)
-            except (EOFError, KeyboardInterrupt):
-                print()
-                print("   Cancelled.")
-                sys.exit(2)
-
-            print()
-
         # Upgrade pip
         print()
         upgrade_pip(venv_python)
@@ -2610,24 +2293,13 @@ def main():
             print()
             print("  4. Try installing manually:")
             requirements_file = REQUIREMENTS_MAP.get(install_type, "requirements.txt")
-            if install_type == INSTALL_ROCM:
-                print(f"     pip install -r {REQUIREMENTS_ROCM_INIT}")
+            if install_type == INSTALL_NVIDIA_CU128:
                 print(f"     pip install -r {requirements_file}")
-                print(f"     pip install --no-deps {CHATTERBOX_REPO}")
-            elif install_type == INSTALL_NVIDIA_CU128:
-                print(f"     pip install -r {requirements_file}")
-                print(f"     pip install --no-deps {CHATTERBOX_REPO}")
+                print(f"     pip install --no-deps {CHATTERBOX_PIP_SPEC}")
             else:
                 print(f"     pip install -r {requirements_file}")
             print()
             sys.exit(1)
-
-        # Patch chatterbox to make watermarker gracefully optional
-        # and fix MPS float64 crash on Apple Silicon (if not already fixed in fork)
-        print()
-        print_substep("Applying post-install patches...")
-        _patch_chatterbox_watermarker(venv_dir, use_embedded)
-        _patch_chatterbox_mps_float32(venv_dir, use_embedded)
 
         # Verify installation
         print()

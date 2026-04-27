@@ -26,16 +26,18 @@ model:
   repo_id: chatterbox-turbo
 
 tts_engine:
+  # auto | cuda | cpu  (Apple MPS / AMD ROCm are not supported)
   device: auto
   predefined_voices_path: voices
   reference_audio_path: reference_audio
   default_voice_id: default_sample.wav
   # Max chunks per engine batch (0 = all chunks in one batch, lowest Python overhead).
   chunk_batch_size: 0
-  # Parallel chunk threads (1 = sequential). >1 matches Chatterbox-TTS-Extended-style overlap; see README.
-  parallel_chunk_workers: 1
   # Heuristic glitch detection (duration, silence, onset); retry each chunk up to N times (0 = off).
   chunk_quality_max_retries: 0
+
+request_limits:
+  max_text_chars: 20000
 
 # Optional: OpenAI-compatible POST /v1/audio/transcriptions (runs when chunk_quality_max_retries > 0).
 asr:
@@ -59,6 +61,8 @@ generation_defaults:
   seed: 0
   speed_factor: 1.0
   language: en
+  # Turbo (T3) only: try 1.4–1.6 if a phrase loops word-for-word in a single line.
+  turbo_repetition_penalty: 1.2
 
 audio_output:
   format: wav

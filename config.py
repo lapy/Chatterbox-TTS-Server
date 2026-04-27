@@ -80,8 +80,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "repo_id": "chatterbox-turbo",  # UPDATED: Default to Turbo model
     },
     "tts_engine": {
-        "device": "auto",  # TTS processing device: 'auto', 'cuda', 'mps', or 'cpu'.
-        # 'auto' will attempt to use 'cuda' if available, then 'mps' if available, otherwise 'cpu'.
+        "device": "auto",  # TTS processing device: 'auto', 'cuda', or 'cpu'.
+        # 'auto' uses CUDA if available and working, otherwise CPU. (MPS/Apple and AMD/ROCm are not supported.)
         "predefined_voices_path": str(
             DEFAULT_VOICES_PATH
         ),  # Directory for predefined voice files.
@@ -91,9 +91,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "default_voice_id": "default_sample.wav",  # Default voice file to use if none is specified.
         # Max chunks per engine.synthesize_batch call (single threadpool hop). 0 = unlimited (all chunks in one batch).
         "chunk_batch_size": 0,
-        # ThreadPoolExecutor size for chunked synthesis (Extended-style overlap). 1 = sequential under lock with cond reuse.
-        # Values >1 re-prepare reference audio per chunk when a reference path is set; see README warning.
-        "parallel_chunk_workers": 1,
         # Fast heuristic checks on each chunk; retry synthesis up to N times per chunk (0 = disabled).
         "chunk_quality_max_retries": 0,
     },
@@ -127,6 +124,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "seed": 0,  # Random seed for generation. 0 often means random or engine default.
         "speed_factor": 1.0,  # Controls the speed of the generated speech.
         "language": "en",  # Default language for TTS.
+        # Chatterbox-Turbo T3 only: penalty on repeating speech tokens (1.0=off, 1.2=upstream).
+        # Raise toward 1.4–1.6 if the model audibly loops the same phrase in one pass.
+        "turbo_repetition_penalty": 1.2,
     },
     "audio_output": {  # Settings related to the format of generated audio.
         "format": "wav",  # Output audio format (e.g., 'wav', 'mp3').
@@ -147,6 +147,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             # PCM silence between independently generated streaming chunks.
             "streaming_inter_chunk_gap_sec": 0.03,
         },
+    },
+    "request_limits": {
+        # Hard cap for API text input before chunking/model work starts.
+        "max_text_chars": 20000,
     },
     "ui_state": {  # Stores user interface preferences and last-used values.
         "last_text": "",  # Last text entered by the user.
@@ -270,10 +274,16 @@ class YamlConfigManager:
         current_device_setting = _get_nested_value(
             config_data, ["tts_engine", "device"], "auto"
         )
+        if current_device_setting == "mps":
+            logger.warning(
+                "tts_engine.device 'mps' is no longer supported; using 'auto' (CUDA, else CPU)."
+            )
+            _set_nested_value(config_data, ["tts_engine", "device"], "auto")
+            current_device_setting = "auto"
         if current_device_setting == "auto":
             resolved_device = self._detect_best_device()
             _set_nested_value(config_data, ["tts_engine", "device"], resolved_device)
-        elif current_device_setting not in ["cuda", "mps", "cpu"]:
+        elif current_device_setting not in ["cuda", "cpu"]:
             logger.warning(
                 f"Invalid TTS device '{current_device_setting}' in configuration. "
                 f"Defaulting to auto-detection."
@@ -302,16 +312,14 @@ class YamlConfigManager:
 
     def _detect_best_device(self) -> str:
         """
-        Robustly detects the best available device for TTS processing.
-        Tests actual CUDA/MPS functionality rather than just checking availability.
+        Robustly detects the best available device: CUDA (NVIDIA) or CPU.
+        This project does not use Apple MPS or AMD/ROCm.
 
         Returns:
-            str: 'cuda' if CUDA is truly functional, 'mps' if MPS is functional, 'cpu' otherwise.
+            str: 'cuda' if CUDA is truly functional, otherwise 'cpu'.
         """
-        # Test CUDA first as it's generally preferred for ML workloads
         if torch.cuda.is_available():
             try:
-                # Actually test CUDA functionality by creating a tensor and moving it to CUDA
                 test_tensor = torch.tensor([1.0])
                 test_tensor = test_tensor.cuda()
                 test_tensor = test_tensor.cpu()  # Clean up
@@ -323,22 +331,7 @@ class YamlConfigManager:
                     f"This usually means PyTorch was not compiled with CUDA support."
                 )
 
-        # Test MPS if CUDA is not available or failed
-        if torch.backends.mps.is_available():
-            try:
-                # Actually test MPS functionality by creating a tensor and moving it to MPS
-                test_tensor = torch.tensor([1.0])
-                test_tensor = test_tensor.to("mps")
-                test_tensor = test_tensor.cpu()  # Clean up
-                logger.info("MPS test successful. Using MPS device.")
-                return "mps"
-            except Exception as e:
-                logger.warning(
-                    f"MPS is reported as available but failed functionality test: {e}. "
-                    f"This usually means PyTorch was not compiled with MPS support."
-                )
-
-        logger.info("Neither CUDA nor MPS is available or functional. Using CPU.")
+        logger.info("CUDA not available or not functional. Using CPU.")
         return "cpu"
 
     def _prepare_config_for_saving(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -985,6 +978,14 @@ def get_gen_default_language() -> str:
     )
 
 
+def get_gen_default_turbo_repetition_penalty() -> float:
+    """T3 speech token repetition penalty for Turbo (ignored for other models)."""
+    return config_manager.get_float(
+        "generation_defaults.turbo_repetition_penalty",
+        _get_default_from_structure("generation_defaults.turbo_repetition_penalty"),
+    )
+
+
 def get_audio_sample_rate() -> int:
     """Returns the default audio sample rate."""
     return config_manager.get_int(
@@ -1018,6 +1019,20 @@ def get_full_config_for_template() -> Dict[str, Any]:
     config_snapshot = config_manager.get_all()  # Gets a deep copy.
     # Convert Path objects in this snapshot to strings for serialization.
     return config_manager._prepare_config_for_saving(config_snapshot)
+
+
+def get_redacted_config_for_template() -> Dict[str, Any]:
+    """Return UI bootstrap config without exposing write-only secret values."""
+    config_snapshot = get_full_config_for_template()
+    secret_paths = [
+        ("server", "auth_password"),
+        ("asr", "access_token"),
+    ]
+    for section, key in secret_paths:
+        section_dict = config_snapshot.get(section)
+        if isinstance(section_dict, dict) and key in section_dict:
+            section_dict[key] = ""
+    return config_snapshot
 
 
 # --- End File: config.py ---

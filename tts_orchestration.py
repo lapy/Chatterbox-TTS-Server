@@ -26,14 +26,6 @@ from models import CustomTTSRequest, OpenAISpeechRequest
 logger = logging.getLogger(__name__)
 
 
-def _parallel_job_seed(base_seed: int, chunk_index_one_based: int) -> int:
-    """Derive a deterministic per-chunk seed so parallel workers do not all call set_seed identically."""
-    if base_seed == 0:
-        return 0
-    mixed = (int(base_seed) + chunk_index_one_based * 0x9E3779B9) & 0x7FFFFFFF
-    return mixed if mixed != 0 else 1
-
-
 @dataclass(frozen=True)
 class ResolvedSynthesisParams:
     temperature: float
@@ -162,9 +154,6 @@ async def synthesize_text_chunks_async(
     from audio_pipeline import _ensure_mono_waveform_1d
 
     batch_cfg = config_manager.get_int("tts_engine.chunk_batch_size", 0)
-    parallel_workers_cfg = max(
-        1, config_manager.get_int("tts_engine.parallel_chunk_workers", 1)
-    )
     chunks_count = len(text_chunks)
     # 0 or negative => single batch (one threadpool hop) for lowest orchestration overhead.
     if batch_cfg <= 0:
@@ -172,8 +161,8 @@ async def synthesize_text_chunks_async(
     else:
         batch_size = max(1, batch_cfg)
     logger.info(
-        f"{log_prefix}: chunk synthesis batch_size={batch_size} (cfg={batch_cfg}), "
-        f"parallel_chunk_workers={parallel_workers_cfg}, chunks={chunks_count}"
+        f"{log_prefix}: sequential chunk synthesis batch_size={batch_size} "
+        f"(cfg={batch_cfg}), chunks={chunks_count}"
     )
     segments: List[np.ndarray] = []
     engine_sr: Optional[int] = None
@@ -181,32 +170,19 @@ async def synthesize_text_chunks_async(
         if cancellation_check is not None:
             await cancellation_check()
         batch_end = min(batch_start + batch_size, chunks_count)
-        batch_len = batch_end - batch_start
-        use_parallel = parallel_workers_cfg > 1 and batch_len > 1
         jobs = []
         for i in range(batch_start, batch_end):
             global_idx = i + 1
             logger.info(
                 f"{log_prefix}: queueing chunk {global_idx}/{chunks_count}..."
             )
-            # Sequential mode: only chunk 0 prepares reference; others reuse conds.
-            # Parallel mode (Extended-style): pass reference on every chunk so workers
-            # do not depend on shared self.conds ordering.
-            chunk_prompt: Optional[str]
-            if use_parallel and audio_prompt_path_str:
+            # First chunk in each lock-held batch prepares reference conditionals.
+            # Later chunks in that batch reuse self.conds while synthesize_batch holds the lock.
+            if audio_prompt_path_str and i == batch_start:
                 chunk_prompt = audio_prompt_path_str
-            elif audio_prompt_path_str and i == 0:
-                chunk_prompt = audio_prompt_path_str
-            elif audio_prompt_path_str:
-                chunk_prompt = None
             else:
                 chunk_prompt = None
 
-            job_seed = (
-                _parallel_job_seed(params.seed, global_idx)
-                if use_parallel
-                else params.seed
-            )
             jobs.append(
                 {
                     "text": text_chunks[i],
@@ -214,27 +190,18 @@ async def synthesize_text_chunks_async(
                     "temperature": params.temperature,
                     "exaggeration": params.exaggeration,
                     "cfg_weight": params.cfg_weight,
-                    "seed": job_seed,
+                    "seed": params.seed,
                     "language": params.language,
                     "chunk_index": global_idx,
                     "chunk_total": chunks_count,
                 }
             )
-        if use_parallel:
-            batch_results = await run_in_threadpool(
-                engine.synthesize_batch_parallel,
-                jobs,
-                max_workers=parallel_workers_cfg,
-                perf_monitor=perf_monitor,
-                log_prefix=log_prefix,
-            )
-        else:
-            batch_results = await run_in_threadpool(
-                engine.synthesize_batch,
-                jobs,
-                perf_monitor=perf_monitor,
-                log_prefix=log_prefix,
-            )
+        batch_results = await run_in_threadpool(
+            engine.synthesize_batch,
+            jobs,
+            perf_monitor=perf_monitor,
+            log_prefix=log_prefix,
+        )
         if cancellation_check is not None:
             await cancellation_check()
         for batch_offset, (audio_tensor, sr) in enumerate(batch_results):

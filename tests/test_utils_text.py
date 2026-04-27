@@ -172,3 +172,16 @@ The danger is thinking: "If I am this good, this stable, and this supportive, sh
         "For you:" in chunk and "The Psychological Trap" in chunk for chunk in chunks
     )
     assert any(chunk.startswith('The "Airport Driver" version') for chunk in chunks)
+
+
+def test_derive_chunk_synthesis_seed_first_chunk_matches_base():
+    assert utils.derive_chunk_synthesis_seed(42, 1) == 42
+    assert utils.derive_chunk_synthesis_seed(42, 0) == 42
+
+
+def test_derive_chunk_synthesis_seed_later_chunks_differ_from_base():
+    a = utils.derive_chunk_synthesis_seed(99, 2)
+    b = utils.derive_chunk_synthesis_seed(99, 3)
+    assert a != 99
+    assert a != b
+    assert utils.derive_chunk_synthesis_seed(0, 5) == 0

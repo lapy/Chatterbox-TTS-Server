@@ -12,6 +12,11 @@ Example:
 
 Enable server.performance_cuda_sync + server.enable_performance_monitor for
 GPU-synchronized per-stage logs on the server.
+
+Recommended single-user latency matrix:
+  1. Run once with tts_engine.chunk_batch_size: 0
+  2. Run once with tts_engine.chunk_batch_size: 1
+  3. Compare buffered WAV total time and streamed MP3/Opus TTFB
 """
 
 from __future__ import annotations
@@ -34,6 +39,12 @@ LONG_TEXT = (
     "This is sentence eight near the end. "
     "This is sentence nine almost done. "
     "This is sentence ten to finish the test."
+)
+
+CONFIG_MATRIX_NOTE = (
+    "Recommended config matrix: run once with tts_engine.chunk_batch_size=0 "
+    "and once with chunk_batch_size=1; compare buffered WAV total time and "
+    "streamed compressed TTFB."
 )
 
 
@@ -137,12 +148,15 @@ def main() -> None:
         ("openai short wav", lambda c: bench_openai_speech(c, base, voice, SHORT_TEXT, "wav", False)),
         ("openai long wav (chunked)", lambda c: bench_openai_speech(c, base, voice, LONG_TEXT, "wav", False)),
         ("openai long mp3 stream", lambda c: bench_openai_speech(c, base, voice, LONG_TEXT, "mp3", True)),
+        ("openai long opus stream", lambda c: bench_openai_speech(c, base, voice, LONG_TEXT, "opus", True)),
         ("tts short wav", lambda c: bench_tts(c, base, voice, SHORT_TEXT, "wav", False, False, 120)),
         ("tts long wav chunked", lambda c: bench_tts(c, base, voice, LONG_TEXT, "wav", False, True, 120)),
         ("tts long mp3 stream", lambda c: bench_tts(c, base, voice, LONG_TEXT, "mp3", True, True, 120)),
+        ("tts long opus stream", lambda c: bench_tts(c, base, voice, LONG_TEXT, "opus", True, True, 120)),
     ]
 
-    print(f"Base URL: {base}  voice={voice}  runs={runs}\n")
+    print(f"Base URL: {base}  voice={voice}  runs={runs}")
+    print(f"{CONFIG_MATRIX_NOTE}\n")
     with httpx.Client() as client:
         for name, fn in scenarios:
             totals: List[float] = []

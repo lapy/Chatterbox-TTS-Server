@@ -28,11 +28,6 @@ def make_engine_stub():
     def _fake_synthesize_batch(jobs, perf_monitor=None, log_prefix=""):
         return [_fake_synthesize(**job) for job in jobs]
 
-    def _fake_synthesize_batch_parallel(
-        jobs, *, max_workers=4, perf_monitor=None, log_prefix=""
-    ):
-        return _fake_synthesize_batch(jobs, perf_monitor, log_prefix)
-
     def _fake_iter(chunks, path, *args, **kwargs):
         for _c in chunks:
             yield torch.zeros(4000, dtype=torch.float32), 24000
@@ -53,7 +48,6 @@ def make_engine_stub():
     stub.unload_model = lambda: True
     stub.synthesize = _fake_synthesize
     stub.synthesize_batch = _fake_synthesize_batch
-    stub.synthesize_batch_parallel = _fake_synthesize_batch_parallel
     stub.iter_synthesize_under_lock = _fake_iter
     stub.get_model_info = _info
     stub.MODEL_LOADED = True

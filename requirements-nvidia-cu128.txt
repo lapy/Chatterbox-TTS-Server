@@ -1,51 +1,43 @@
 # ============================================================================
-# CHATTERBOX TTS SERVER - REQUIREMENTS (NVIDIA CUDA 12.8 / BLACKWELL)
+# CHATTERBOX TTS SERVER — NVIDIA CUDA 12.8 (Blackwell / sm_120)
 # ============================================================================
-# This file provides CUDA 12.8 support for Blackwell architecture (sm_120):
-#   - RTX 5060 Ti, RTX 5070, RTX 5070 Ti, RTX 5080, RTX 5090
-#
-# For RTX 20/30/40 series GPUs, use requirements-nvidia.txt instead.
-#
-# ============================================================================
-# IMPORTANT: chatterbox-tts is NOT included here. It must be installed
-# separately with --no-deps to prevent PyTorch from being downgraded.
-#
-# The start.py launcher handles this automatically.
-#
-# For manual installation, run these commands in order:
-#   pip install -r requirements-nvidia-cu128.txt
-#   pip install --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09 s3tokenizer==0.3.0 onnx==1.16.0
-# ============================================================================
+# PyTorch cu128 wheels start at 2.7.0; 2.9.0 is widely used for RTX 50/Blackwell.
+# ML library versions match resemble-ai/chatterbox 0.1.7 (see requirements.txt
+# and upstream pyproject) except the torch/vision/audio CUDA build.
 
-# --- PyTorch CUDA 12.8 Package Index ---
+# --- PyTorch CUDA 12.8 (Blackwell); newer than Chatterbox's 2.6.0 floor ---
 --extra-index-url https://download.pytorch.org/whl/cu128
 
-# --- Deep Learning Framework (CUDA 12.8 with sm_120 Blackwell support) ---
 torch==2.9.0
 torchvision==0.24.0
 torchaudio==2.9.0
 
-# --- Chatterbox Dependencies (explicit, since --no-deps skips them) ---
-# NOTE: s3tokenizer and onnx are installed with --no-deps alongside chatterbox
-# to avoid protobuf version conflicts (onnx requires protobuf>=3.20.2 but
-# descript-audiotools requires protobuf<3.20).
+# For manual install after this file + chatterbox --no-deps:
+#   pip install -r requirements-nvidia-cu128.txt
+#   pip install --no-deps git+https://github.com/resemble-ai/chatterbox.git@59bc590b3cad826e5d5987745bf6844627a21ad5 s3tokenizer==0.3.0 onnx==1.16.0
+
+# --- Chatterbox 0.1.7 explicit deps (resemble-ai/chatterbox pyproject) ---
 conformer==0.3.2
 diffusers==0.29.0
-transformers==4.46.3
+transformers==5.2.0
+safetensors==0.5.3
+librosa==0.11.0
+pykakasi==2.3.0
+gradio==6.8.0
+pyloudnorm==0.1.1
+spacy-pkuseg
+omegaconf>=2.3.0
 einops>=0.7.0
-omegaconf==2.3.0
+resemble-perth @ git+https://github.com/resemble-ai/Perth.git@master
 resampy==0.4.3
-resemble-perth==1.0.1
 
 # --- Core Web Framework ---
-fastapi>=0.100.0,<0.116.0      # starlette<1.0 needed for TemplateResponse compat
+fastapi>=0.100.0,<0.116.0
 uvicorn[standard]>=0.27.0
 
 # --- ML & Audio Libraries ---
-numpy>=1.24.0
+numpy>=1.24.0,<2.0.0
 soundfile>=0.12.0
-librosa>=0.10.0
-safetensors>=0.4.0
 descript-audio-codec==1.0.0
 
 # --- Configuration & Utilities ---

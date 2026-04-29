@@ -56,6 +56,12 @@ except ImportError:
     )
 
 
+# --- Format to file extension mapping ---
+def format_to_extension(fmt: str) -> str:
+    """Map an output format name to its file extension."""
+    return "ogg" if fmt == "opus" else fmt
+
+
 # --- Filename Sanitization ---
 def sanitize_filename(filename: str) -> str:
     """

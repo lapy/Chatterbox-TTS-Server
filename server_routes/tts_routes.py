@@ -218,7 +218,7 @@ async def custom_tts_endpoint(
     )
     suggested_filename_base = f"tts_output_{param_tag}_{timestamp_str}"
     download_filename = utils.sanitize_filename(
-        f"{suggested_filename_base}.{output_format_str}"
+        f"{suggested_filename_base}.{utils.format_to_extension(output_format_str)}"
     )
 
     if request.stream:

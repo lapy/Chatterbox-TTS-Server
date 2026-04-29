@@ -225,7 +225,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest, http_request: Req
             perf_monitor=perf_monitor,
             log_prefix="OpenAI speech",
             cancellation_check=cancellation_check,
-            save_filename=f"openai_tts_{time.strftime('%Y%m%d_%H%M%S')}.{request.response_format}",
+            save_filename=f"openai_tts_{time.strftime('%Y%m%d_%H%M%S')}.{utils.format_to_extension(request.response_format)}",
         )
         stream_headers = streaming_headers(output_policy)
         locked = build_locked_synthesis_payload(ctx)

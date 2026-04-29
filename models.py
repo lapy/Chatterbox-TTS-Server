@@ -114,7 +114,7 @@ class OpenAISpeechRequest(BaseModel):
     model: str
     input_: str = Field(..., alias="input")
     voice: str
-    response_format: Literal["wav", "opus", "mp3", "pcm"] = "wav"
+    response_format: Literal["wav", "opus", "mp3", "pcm"] = "opus"
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     seed: Optional[int] = None
     stream_format: Optional[Literal["sse", "audio"]] = None
